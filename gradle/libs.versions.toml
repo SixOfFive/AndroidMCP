@@ -22,6 +22,7 @@ androidx-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
 androidx-material3 = { group = "androidx.compose.material3", name = "material3" }
 androidx-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
+androidx-documentfile = { group = "androidx.documentfile", name = "documentfile", version = "1.0.1" }
 ktor-server-core = { group = "io.ktor", name = "ktor-server-core", version.ref = "ktor" }
 ktor-server-cio = { group = "io.ktor", name = "ktor-server-cio", version.ref = "ktor" }
 ktor-server-content-negotiation = { group = "io.ktor", name = "ktor-server-content-negotiation", version.ref = "ktor" }

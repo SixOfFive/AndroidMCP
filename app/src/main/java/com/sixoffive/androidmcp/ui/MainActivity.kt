@@ -99,6 +99,15 @@ private fun ServerScreen() {
         }
     }
 
+    val folderLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+            runCatching {
+                ctx.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            ConfigStore.addFolder(uri.toString())
+        }
+    }
+
     fun granted(perms: List<String>): Boolean {
         permRefresh // read so recomposition re-checks after a grant
         if (perms.isEmpty()) return true
@@ -157,6 +166,29 @@ private fun ServerScreen() {
                         TextButton(onClick = { com.sixoffive.androidmcp.server.ProjectionHolder.stop() }) { Text("Stop sharing") }
                     } else {
                         OutlinedButton(onClick = { projLauncher.launch(mpm.createScreenCaptureIntent()) }) { Text("Start screen sharing") }
+                    }
+                }
+            }
+
+            // ---- shared folders (for list_files) ----
+            item {
+                SectionCard("Shared folders") {
+                    Text(
+                        "Folders you grant here are the only files list_files can read.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedButton(onClick = { folderLauncher.launch(null) }) { Text("Add folder") }
+                    config.folders.forEach { f ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                android.net.Uri.parse(f).lastPathSegment ?: f,
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            )
+                            TextButton(onClick = { ConfigStore.removeFolder(f) }) { Text("Remove") }
+                        }
                     }
                 }
             }

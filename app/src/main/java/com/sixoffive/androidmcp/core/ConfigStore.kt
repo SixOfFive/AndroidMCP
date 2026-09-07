@@ -22,6 +22,7 @@ data class AppConfig(
     val enabled: Set<String> = setOf("list_capabilities"),
     val port: Int = 8765,
     val bind: String = "loopback", // loopback | lan | tailscale
+    val folders: Set<String> = emptySet(), // persisted SAF tree URIs
 )
 
 /** Single observable source of truth for toggles + server settings. */
@@ -33,6 +34,7 @@ object ConfigStore {
     private val KEY_ENABLED = stringSetPreferencesKey("enabled_caps")
     private val KEY_PORT = intPreferencesKey("port")
     private val KEY_BIND = stringPreferencesKey("bind_mode")
+    private val KEY_FOLDERS = stringSetPreferencesKey("folders")
 
     val state = MutableStateFlow(AppConfig())
 
@@ -42,6 +44,7 @@ object ConfigStore {
             enabled = (p[KEY_ENABLED] ?: emptySet()) + "list_capabilities",
             port = p[KEY_PORT] ?: 8765,
             bind = p[KEY_BIND] ?: "loopback",
+            folders = p[KEY_FOLDERS] ?: emptySet(),
         )
     }
 
@@ -68,4 +71,12 @@ object ConfigStore {
 
     fun setBind(mode: String) = scope.launch { app.configDataStore.edit { it[KEY_BIND] = mode } }
     fun setPort(port: Int) = scope.launch { app.configDataStore.edit { it[KEY_PORT] = port } }
+
+    fun addFolder(uri: String) = scope.launch {
+        app.configDataStore.edit { p -> p[KEY_FOLDERS] = (p[KEY_FOLDERS] ?: emptySet()) + uri }
+    }
+
+    fun removeFolder(uri: String) = scope.launch {
+        app.configDataStore.edit { p -> p[KEY_FOLDERS] = (p[KEY_FOLDERS] ?: emptySet()) - uri }
+    }
 }

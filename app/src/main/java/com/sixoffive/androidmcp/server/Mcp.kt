@@ -74,6 +74,9 @@ object Mcp {
                 if (cap.id == "read_sms" || cap.id == "read_call_log" || cap.id == "read_notifications") {
                     putJsonObject("limit") { put("type", "integer") }
                 }
+                if (cap.id == "list_files") {
+                    putJsonObject("uri") { put("type", "string") }
+                }
                 if (cap.id == "record_audio") {
                     putJsonObject("seconds") { put("type", "integer") }
                 }
@@ -199,6 +202,7 @@ object Mcp {
         "read_clipboard" -> listOf(textBlk(clipboardRead(ctx)))
         "write_clipboard" -> listOf(textBlk(clipboardWrite(ctx, args)))
         "read_notifications" -> listOf(textBlk(readNotifications(args)))
+        "list_files" -> listOf(textBlk(filesRunner(ctx, args)))
         else -> listOf(textBlk("not implemented: ${cap.id}"))
     }
 
@@ -408,5 +412,10 @@ object Mcp {
         val limit = args["limit"]?.jsonPrimitive?.intOrNull ?: 20
         return McpNotificationListener.readActive(limit)
             ?: "notification listener isn't connected yet — toggle Notification access off/on for androidmcp, then retry"
+    }
+
+    private fun filesRunner(ctx: Context, args: JsonObject): String {
+        val uri = args["uri"]?.jsonPrimitive?.contentOrNull
+        return if (uri.isNullOrBlank()) FilesAccess.listAll(ctx) else FilesAccess.read(ctx, uri)
     }
 }

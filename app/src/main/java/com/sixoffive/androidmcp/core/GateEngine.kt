@@ -33,11 +33,13 @@ object GateEngine {
                     true,
                 )
             }
-            "list_files" -> return GateResult.Denied(
-                ReasonCode.NOT_IMPLEMENTED, cap, true, false,
-                "File access via the folder picker (SAF) is not wired up in this build yet.",
-                false,
-            )
+            "list_files" -> {
+                if (ConfigStore.current.folders.isEmpty()) return GateResult.Denied(
+                    ReasonCode.SPECIAL_ACCESS_NOT_ENABLED, cap, true, false,
+                    "No folders are shared yet. Open androidmcp → Shared folders → Add folder to grant read access to a folder, then retry.",
+                    true,
+                )
+            }
         }
 
         // Gate 2 — OS runtime permission (re-checked live)
