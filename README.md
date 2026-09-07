@@ -170,13 +170,19 @@ Each is a default-off gated feature with a plain "why / why-not":
 
 ## Roadmap
 
-- [ ] Project scaffold + green build *(in progress)*
-- [ ] Core: gate engine, config store, token store, audit log, approval manager
-- [ ] Server: Ktor foreground service, MCP JSON-RPC over Streamable HTTP, bearer auth
-- [ ] MVP capabilities (see table)
-- [ ] Compose config UI + onboarding wizard
-- [ ] Install & verify against a real MCP client
-- [ ] v1.1 capabilities + per-call approval prompts
+- [x] Project scaffold + green build
+- [x] Core: gate engine, config store, hashed token store, audit log
+- [x] Server: Ktor foreground service, MCP JSON-RPC over Streamable HTTP, bearer auth
+- [x] MVP capabilities: `list_capabilities`, `device_info`, `battery_status`,
+      `read_sensors`, `get_location`, `post_notification` (working); `read_notifications`
+      + `list_files` gated as not-yet-wired
+- [x] Compose config UI (master switch, per-capability toggles + *why*, token manager, audit)
+- [x] Install & verify against a real MCP client — auth, `tools/list`, an enabled
+      call, and a gated structured refusal all confirmed on the device
+- [ ] Per-call approval manager for high-impact tools
+- [ ] Onboarding wizard (restricted-settings, battery-optimization, Device Care)
+- [ ] `read_notifications` (Notification Listener) + `list_files` (SAF)
+- [ ] v1.1 capabilities: camera, mic, screenshot, clipboard, SMS, run_shortcut
 - [ ] Installer script + packaging
 
 ---
