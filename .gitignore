@@ -1,4 +1,20 @@
-# Claude Code / session artifacts (excluded per request)
+# ---- Android / Gradle build artifacts ----
+/build/
+/app/build/
+**/build/
+.gradle/
+local.properties
+*.apk
+*.aab
+*.ap_
+*.dex
+.cxx/
+captures/
+/.idea/
+*.iml
+.kotlin/
+
+# ---- Claude Code / session artifacts (excluded per request) ----
 CLAUDE.md
 braindump.md
 .claude/
@@ -6,21 +22,29 @@ braindump.md
 .claude*
 *.claude
 
-# Project changelog (excluded per request)
+# ---- Project changelog (excluded per request) ----
 CHANGELOG.md
 
-# Never commit: 2FA backup / secrets
-gauth-backup/
-*qr-0*.png
-*.token
-*token*
-
-# Test media & stack outputs
-*.mp4
-*.mov
+# ---- Not part of the app: imaging tool, test media, scratch (per request) ----
+stack.sh
+pano_*.sh
+pano_*.py
+/*.mp4
+/*.mov
+/*.png
+/*.jpg
+/*.jpeg
+/*.webp
 *_stacked*.png
 *_up.png
 
-# OS cruft
+# ---- Never commit: 2FA backup / secrets ----
+gauth-backup/
+*.token
+*token*
+*.keystore
+*.jks
+
+# ---- OS cruft ----
 .DS_Store
 Thumbs.db
