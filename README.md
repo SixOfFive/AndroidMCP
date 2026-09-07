@@ -183,7 +183,8 @@ Each is a default-off gated feature with a plain "why / why-not":
 - [x] Per-call approval manager for high-impact tools — Allow/Deny notification +
       "armed for N minutes" window; verified: `get_location` suspends until approved,
       then returns a real fix
-- [ ] Onboarding wizard (restricted-settings, battery-optimization, Device Care)
+- [x] Setup & reliability card — battery-optimization + notification-access
+      deep-links, restricted-settings / Samsung Device Care guidance
 - [ ] `read_notifications` (Notification Listener) + `list_files` (SAF)
 - [x] v1.1 `take_photo` — Camera2 headless capture, returns an MCP image content
       block, approval-gated; verified on device (real 1080×1440 JPEG captured)

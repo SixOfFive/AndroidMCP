@@ -153,6 +153,37 @@ private fun ServerScreen() {
                 }
             }
 
+            // ---- setup & reliability ----
+            item {
+                SectionCard("Setup & reliability") {
+                    Text(
+                        "For a server that stays reachable and for the special-access capabilities:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedButton(onClick = {
+                        runCatching {
+                            ctx.startActivity(
+                                android.content.Intent(
+                                    android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                    android.net.Uri.parse("package:" + ctx.packageName),
+                                ),
+                            )
+                        }
+                    }) { Text("Allow unrestricted battery") }
+                    OutlinedButton(onClick = {
+                        runCatching {
+                            ctx.startActivity(android.content.Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                        }
+                    }) { Text("Notification access (Read notifications)") }
+                    Text(
+                        "Sideloaded: if a special-access toggle is greyed out, open App info → ⋮ → 'Allow restricted settings' first. On Samsung, also exclude androidmcp from Device Care → Sleeping apps.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
             // ---- screen sharing (for capture_screenshot) ----
             item {
                 SectionCard("Screen sharing") {
