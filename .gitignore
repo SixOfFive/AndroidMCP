@@ -1,0 +1,26 @@
+# Claude Code / session artifacts (excluded per request)
+CLAUDE.md
+braindump.md
+.claude/
+**/.claude/
+.claude*
+*.claude
+
+# Project changelog (excluded per request)
+CHANGELOG.md
+
+# Never commit: 2FA backup / secrets
+gauth-backup/
+*qr-0*.png
+*.token
+*token*
+
+# Test media & stack outputs
+*.mp4
+*.mov
+*_stacked*.png
+*_up.png
+
+# OS cruft
+.DS_Store
+Thumbs.db
