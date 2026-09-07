@@ -65,6 +65,9 @@ object Mcp {
                     putJsonObject("title") { put("type", "string") }
                     putJsonObject("text") { put("type", "string") }
                 }
+                if (cap.id == "take_photo") {
+                    putJsonObject("camera") { put("type", "string"); putJsonArray("enum") { add("back"); add("front") } }
+                }
             }
         })
     }
@@ -86,10 +89,10 @@ object Mcp {
                     AuditLog.record(cap.id, client, false, "REQUIRES_USER_APPROVAL")
                     return result(id, approvalRefusal(cap))
                 }
-                val text = runCatching { withContext(Dispatchers.IO) { execute(ctx, cap, args) } }
-                    .getOrElse { "error: ${it.message}" }
+                val content = runCatching { withContext(Dispatchers.IO) { execute(ctx, cap, args) } }
+                    .getOrElse { listOf(textBlk("error: ${it.message}")) }
                 AuditLog.record(cap.id, client, true, "ok")
-                result(id, successResult(text))
+                result(id, successResult(content))
             }
         }
     }
@@ -105,12 +108,13 @@ object Mcp {
         putJsonObject("error") { put("code", code); put("message", message) }
     }.toString()
 
-    private fun textContent(s: String) = buildJsonObject {
-        putJsonArray("content") { add(buildJsonObject { put("type", "text"); put("text", s) }) }
+    private fun textBlk(s: String): JsonObject = buildJsonObject { put("type", "text"); put("text", s) }
+    private fun imageBlk(b64: String, mime: String): JsonObject = buildJsonObject {
+        put("type", "image"); put("data", b64); put("mimeType", mime)
     }
 
-    private fun successResult(text: String): JsonObject = buildJsonObject {
-        putJsonArray("content") { add(buildJsonObject { put("type", "text"); put("text", text) }) }
+    private fun successResult(content: List<JsonObject>): JsonObject = buildJsonObject {
+        putJsonArray("content") { content.forEach { add(it) } }
         put("isError", false)
     }
 
@@ -168,14 +172,15 @@ object Mcp {
 
     // ---- capability runners ----
 
-    private fun execute(ctx: Context, cap: CapabilityMeta, args: JsonObject): String = when (cap.id) {
-        "list_capabilities" -> listCapabilities(ctx)
-        "device_info" -> deviceInfo(ctx)
-        "battery_status" -> batteryStatus(ctx)
-        "read_sensors" -> sensorSnapshot(ctx)
-        "get_location" -> location(ctx)
-        "post_notification" -> postNotification(ctx, args)
-        else -> "not implemented: ${cap.id}"
+    private suspend fun execute(ctx: Context, cap: CapabilityMeta, args: JsonObject): List<JsonObject> = when (cap.id) {
+        "list_capabilities" -> listOf(textBlk(listCapabilities(ctx)))
+        "device_info" -> listOf(textBlk(deviceInfo(ctx)))
+        "battery_status" -> listOf(textBlk(batteryStatus(ctx)))
+        "read_sensors" -> listOf(textBlk(sensorSnapshot(ctx)))
+        "get_location" -> listOf(textBlk(location(ctx)))
+        "post_notification" -> listOf(textBlk(postNotification(ctx, args)))
+        "take_photo" -> takePhoto(ctx, args)
+        else -> listOf(textBlk("not implemented: ${cap.id}"))
     }
 
     private fun listCapabilities(ctx: Context): String = Capabilities.REGISTRY.joinToString("\n") { c ->
@@ -270,5 +275,22 @@ object Mcp {
             .build()
         nm.notify((System.currentTimeMillis() % 100000).toInt(), n)
         return "posted notification: \"$title\""
+    }
+
+    private suspend fun takePhoto(ctx: Context, args: JsonObject): List<JsonObject> {
+        val facing = args["camera"]?.jsonPrimitive?.contentOrNull ?: "back"
+        val jpeg = CameraCapture.capture(ctx, facing)
+            ?: return listOf(textBlk("Camera capture failed or timed out — another app may hold the camera, or the app is backgrounded (open androidmcp and retry)."))
+        val opts = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, opts)
+        runCatching {
+            val dir = java.io.File(ctx.filesDir, "photos").apply { mkdirs() }
+            java.io.File(dir, "last.jpg").writeBytes(jpeg)
+        }
+        val b64 = android.util.Base64.encodeToString(jpeg, android.util.Base64.NO_WRAP)
+        return listOf(
+            textBlk("Captured ${opts.outWidth}x${opts.outHeight} JPEG from the $facing camera (${jpeg.size} bytes)."),
+            imageBlk(b64, "image/jpeg"),
+        )
     }
 }

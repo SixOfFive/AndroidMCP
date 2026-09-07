@@ -85,6 +85,18 @@ object Capabilities {
             risk = "Medium–high depending on the folder granted",
             defaultOn = false, phase = Phase.MVP, highImpact = true,
         ),
+        CapabilityMeta(
+            id = "take_photo", title = "Take photo",
+            why = listOf(
+                "Capture a still photo from the front or rear camera on request",
+                "Let a client see what the camera sees (scan a document, QR code, or surroundings)",
+            ),
+            permissions = listOf("android.permission.CAMERA"),
+            dataExposed = "A photo of whatever the camera is pointed at",
+            risk = "High — anything or anyone in view can be photographed on command",
+            defaultOn = false, phase = Phase.V1_1, highImpact = true,
+            requiresForegroundNote = true,
+        ),
     )
 
     fun byId(id: String): CapabilityMeta? = REGISTRY.firstOrNull { it.id == id }

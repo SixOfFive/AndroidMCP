@@ -184,7 +184,10 @@ Each is a default-off gated feature with a plain "why / why-not":
       then returns a real fix
 - [ ] Onboarding wizard (restricted-settings, battery-optimization, Device Care)
 - [ ] `read_notifications` (Notification Listener) + `list_files` (SAF)
-- [ ] v1.1 capabilities: camera, mic, screenshot, clipboard, SMS, run_shortcut
+- [x] v1.1 `take_photo` — Camera2 headless capture, returns an MCP image content
+      block, approval-gated; verified on device (real 1080×1440 JPEG captured)
+- [ ] v1.1 remaining: `record_audio`, `capture_screenshot`, clipboard,
+      `read_sms`/`read_call_log`, `run_shortcut`
 - [x] Installer script (`scripts/build-and-install.sh`) — builds + installs to connected devices
 
 ---
