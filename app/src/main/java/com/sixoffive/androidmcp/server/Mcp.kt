@@ -193,6 +193,7 @@ object Mcp {
         "post_notification" -> listOf(textBlk(postNotification(ctx, args)))
         "take_photo" -> takePhoto(ctx, args)
         "record_audio" -> recordAudio(ctx, args)
+        "capture_screenshot" -> screenshot(ctx)
         "read_sms" -> listOf(textBlk(smsRead(ctx, args)))
         "read_call_log" -> listOf(textBlk(callLog(ctx, args)))
         "read_clipboard" -> listOf(textBlk(clipboardRead(ctx)))
@@ -323,6 +324,25 @@ object Mcp {
         return listOf(
             textBlk("Recorded ${secs}s of audio (${bytes.size} bytes, AAC/MP4)."),
             audioBlk(b64, "audio/mp4"),
+        )
+    }
+
+    private suspend fun screenshot(ctx: Context): List<JsonObject> {
+        if (ProjectionHolder.projection == null) {
+            return listOf(textBlk("Screen capture isn't active. Open androidmcp and tap 'Start screen sharing' (Android requires a one-time on-device consent), then retry."))
+        }
+        val jpeg = ScreenCapture.capture(ctx)
+            ?: return listOf(textBlk("Screen capture failed — the projection may have been revoked. Re-start screen sharing in androidmcp."))
+        val opts = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, opts)
+        runCatching {
+            val dir = java.io.File(ctx.filesDir, "screens").apply { mkdirs() }
+            java.io.File(dir, "last.jpg").writeBytes(jpeg)
+        }
+        val b64 = android.util.Base64.encodeToString(jpeg, android.util.Base64.NO_WRAP)
+        return listOf(
+            textBlk("Captured screen ${opts.outWidth}x${opts.outHeight} (${jpeg.size} bytes)."),
+            imageBlk(b64, "image/jpeg"),
         )
     }
 

@@ -139,6 +139,18 @@ object Capabilities {
             risk = "Low",
             defaultOn = false, phase = Phase.V1_1, highImpact = false,
         ),
+        CapabilityMeta(
+            id = "capture_screenshot", title = "Capture screenshot",
+            why = listOf(
+                "Capture the current screen so a client can see what's displayed",
+                "Read on-screen content a client cannot otherwise reach",
+            ),
+            permissions = emptyList(), // MediaProjection session, not a runtime permission
+            dataExposed = "An image of whatever is on your screen right now",
+            risk = "High — the screen may show messages, banking, or private content",
+            defaultOn = false, phase = Phase.V1_1, highImpact = true,
+            requiresForegroundNote = true,
+        ),
     )
 
     fun byId(id: String): CapabilityMeta? = REGISTRY.firstOrNull { it.id == id }

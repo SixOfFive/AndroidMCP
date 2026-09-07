@@ -89,6 +89,16 @@ private fun ServerScreen() {
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permRefresh++ }
 
+    val mpm = remember {
+        ctx.getSystemService(android.content.Context.MEDIA_PROJECTION_SERVICE) as android.media.projection.MediaProjectionManager
+    }
+    val projActive by com.sixoffive.androidmcp.server.ProjectionHolder.active.collectAsState()
+    val projLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
+        if (res.resultCode == android.app.Activity.RESULT_OK && res.data != null) {
+            com.sixoffive.androidmcp.server.McpService.startProjection(ctx, res.resultCode, res.data!!)
+        }
+    }
+
     fun granted(perms: List<String>): Boolean {
         permRefresh // read so recomposition re-checks after a grant
         if (perms.isEmpty()) return true
@@ -130,6 +140,23 @@ private fun ServerScreen() {
                             ConfigStore.setMaster(on)
                             if (on) McpService.start(ctx) else McpService.stop(ctx)
                         })
+                    }
+                }
+            }
+
+            // ---- screen sharing (for capture_screenshot) ----
+            item {
+                SectionCard("Screen sharing") {
+                    Text(
+                        if (projActive) "Active — capture_screenshot can grab the screen."
+                        else "Off. Required for capture_screenshot — Android needs a one-time consent. (Server must be running.)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (projActive) {
+                        TextButton(onClick = { com.sixoffive.androidmcp.server.ProjectionHolder.stop() }) { Text("Stop sharing") }
+                    } else {
+                        OutlinedButton(onClick = { projLauncher.launch(mpm.createScreenCaptureIntent()) }) { Text("Start screen sharing") }
                     }
                 }
             }

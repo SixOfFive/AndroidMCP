@@ -5,7 +5,15 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.app.Notification
+import android.content.pm.ServiceInfo
+import android.media.projection.MediaProjection
+import android.media.projection.MediaProjectionManager
+import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.sixoffive.androidmcp.R
@@ -32,12 +40,49 @@ class McpService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        startForeground(NOTIF_ID, buildNotification("starting…"))
+        startForegroundCompat(buildNotification("starting…"), mediaProjection = false)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_PROJECT) {
+            handleProjection(intent)
+            return START_STICKY
+        }
         if (engine == null) startServer()
         return START_STICKY
+    }
+
+    private fun startForegroundCompat(n: Notification, mediaProjection: Boolean) {
+        if (Build.VERSION.SDK_INT >= 29) {
+            var type = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            if (mediaProjection) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+            startForeground(NOTIF_ID, n, type)
+        } else {
+            startForeground(NOTIF_ID, n)
+        }
+    }
+
+    private fun handleProjection(intent: Intent) {
+        // Android requires a mediaProjection-typed foreground service to be running
+        // BEFORE getMediaProjection() — so (re)assert foreground with that type here.
+        startForegroundCompat(buildNotification("screen sharing active"), mediaProjection = true)
+        val code = intent.getIntExtra("code", Int.MIN_VALUE)
+        @Suppress("DEPRECATION")
+        val data: Intent? = if (Build.VERSION.SDK_INT >= 33)
+            intent.getParcelableExtra("data", Intent::class.java)
+        else intent.getParcelableExtra("data")
+        if (code == Int.MIN_VALUE || data == null) return
+        try {
+            val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            val proj = mpm.getMediaProjection(code, data)
+            proj.registerCallback(object : MediaProjection.Callback() {
+                override fun onStop() { ProjectionHolder.set(null) }
+            }, Handler(Looper.getMainLooper()))
+            ProjectionHolder.set(proj)
+        } catch (t: Throwable) {
+            Log.e("androidmcp", "getMediaProjection (service) failed", t)
+            ProjectionHolder.set(null)
+        }
     }
 
     private fun startServer() {
@@ -82,6 +127,7 @@ class McpService : Service() {
     companion object {
         const val CHANNEL = "androidmcp_server"
         const val NOTIF_ID = 1
+        const val ACTION_PROJECT = "com.sixoffive.androidmcp.START_PROJECTION"
 
         val running = MutableStateFlow(false)
         val boundInfo = MutableStateFlow("")
@@ -99,6 +145,12 @@ class McpService : Service() {
         }
 
         fun stop(ctx: Context) = ctx.stopService(Intent(ctx, McpService::class.java))
+
+        fun startProjection(ctx: Context, code: Int, data: Intent) {
+            val i = Intent(ctx, McpService::class.java)
+                .setAction(ACTION_PROJECT).putExtra("code", code).putExtra("data", data)
+            ContextCompat.startForegroundService(ctx, i)
+        }
     }
 }
 

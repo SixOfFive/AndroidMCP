@@ -191,7 +191,10 @@ Each is a default-off gated feature with a plain "why / why-not":
       approval-gated); clipboard read is honestly foreground-limited
 - [x] v1.1 `record_audio` — MediaRecorder mic clip, returns an MCP audio block,
       approval-gated; verified (3s AAC/MP4 captured)
-- [ ] v1.1 remaining: `capture_screenshot` (MediaProjection), `run_shortcut`
+- [x] v1.1 `capture_screenshot` — MediaProjection: UI-initiated consent, then
+      service-side `getMediaProjection` under a mediaProjection-typed FGS; captures
+      a frame via VirtualDisplay+ImageReader. Verified — real screen JPEG captured
+- [ ] v1.1 remaining: `run_shortcut`
 - [x] Installer script (`scripts/build-and-install.sh`) — builds + installs to connected devices
 
 ---
