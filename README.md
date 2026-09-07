@@ -183,7 +183,7 @@ Each is a default-off gated feature with a plain "why / why-not":
 - [ ] Onboarding wizard (restricted-settings, battery-optimization, Device Care)
 - [ ] `read_notifications` (Notification Listener) + `list_files` (SAF)
 - [ ] v1.1 capabilities: camera, mic, screenshot, clipboard, SMS, run_shortcut
-- [ ] Installer script + packaging
+- [x] Installer script (`scripts/build-and-install.sh`) — builds + installs to connected devices
 
 ---
 
