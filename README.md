@@ -179,7 +179,9 @@ Each is a default-off gated feature with a plain "why / why-not":
 - [x] Compose config UI (master switch, per-capability toggles + *why*, token manager, audit)
 - [x] Install & verify against a real MCP client — auth, `tools/list`, an enabled
       call, and a gated structured refusal all confirmed on the device
-- [ ] Per-call approval manager for high-impact tools
+- [x] Per-call approval manager for high-impact tools — Allow/Deny notification +
+      "armed for N minutes" window; verified: `get_location` suspends until approved,
+      then returns a real fix
 - [ ] Onboarding wizard (restricted-settings, battery-optimization, Device Care)
 - [ ] `read_notifications` (Notification Listener) + `list_files` (SAF)
 - [ ] v1.1 capabilities: camera, mic, screenshot, clipboard, SMS, run_shortcut

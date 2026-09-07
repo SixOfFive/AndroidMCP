@@ -32,6 +32,10 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <receiver
+            android:name=".server.ApprovalReceiver"
+            android:exported="false" />
+
     </application>
 
 </manifest>

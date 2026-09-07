@@ -21,6 +21,8 @@ import com.sixoffive.androidmcp.core.CapabilityMeta
 import com.sixoffive.androidmcp.core.ConfigStore
 import com.sixoffive.androidmcp.core.GateEngine
 import com.sixoffive.androidmcp.core.GateResult
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -30,7 +32,7 @@ object Mcp {
     private const val PROTOCOL = "2025-06-18"
     private val json = Json { ignoreUnknownKeys = true }
 
-    fun handle(ctx: Context, body: String, client: String): String? {
+    suspend fun handle(ctx: Context, body: String, client: String): String? {
         val root = runCatching { json.parseToJsonElement(body) }.getOrNull()
             ?: return error(JsonNull, -32700, "Parse error")
         if (root !is JsonObject) return error(JsonNull, -32600, "Invalid Request")
@@ -67,7 +69,7 @@ object Mcp {
         })
     }
 
-    private fun toolsCall(ctx: Context, id: JsonElement, root: JsonObject, client: String): String {
+    private suspend fun toolsCall(ctx: Context, id: JsonElement, root: JsonObject, client: String): String {
         val params = root["params"] as? JsonObject
         val name = params?.get("name")?.jsonPrimitive?.contentOrNull
         val args = params?.get("arguments") as? JsonObject ?: JsonObject(emptyMap())
@@ -80,7 +82,11 @@ object Mcp {
                 result(id, refusalResult(cap, gate))
             }
             GateResult.Allowed -> {
-                val text = runCatching { run(ctx, cap, args) }
+                if (!ApprovalManager.require(ctx, cap, client)) {
+                    AuditLog.record(cap.id, client, false, "REQUIRES_USER_APPROVAL")
+                    return result(id, approvalRefusal(cap))
+                }
+                val text = runCatching { withContext(Dispatchers.IO) { execute(ctx, cap, args) } }
                     .getOrElse { "error: ${it.message}" }
                 AuditLog.record(cap.id, client, true, "ok")
                 result(id, successResult(text))
@@ -134,6 +140,26 @@ object Mcp {
         put("isError", true)
     }
 
+    private fun approvalRefusal(cap: CapabilityMeta): JsonObject = buildJsonObject {
+        putJsonArray("content") {
+            add(buildJsonObject {
+                put("type", "text")
+                put("text", "${cap.title} needs your approval on the device. Approve the prompt (or arm the capability in the app), then retry.")
+            })
+        }
+        putJsonObject("structuredContent") {
+            put("status", "requires_user_approval")
+            put("capability", cap.id)
+            put("reason_code", "REQUIRES_USER_APPROVAL")
+            put("gate_failed", "user_approval")
+            putJsonArray("why_required") { cap.why.forEach { add(it) } }
+            put("data_exposed", cap.dataExposed)
+            put("remediation", "High-impact tool: approve the on-device notification prompt, or arm this capability, then retry.")
+            put("retriable", true)
+        }
+        put("isError", true)
+    }
+
     private fun gateFailed(d: GateResult.Denied): String = when {
         !d.toggleEnabled -> "app_toggle"
         !d.permissionGranted -> "os_permission"
@@ -142,7 +168,7 @@ object Mcp {
 
     // ---- capability runners ----
 
-    private fun run(ctx: Context, cap: CapabilityMeta, args: JsonObject): String = when (cap.id) {
+    private fun execute(ctx: Context, cap: CapabilityMeta, args: JsonObject): String = when (cap.id) {
         "list_capabilities" -> listCapabilities(ctx)
         "device_info" -> deviceInfo(ctx)
         "battery_status" -> batteryStatus(ctx)
