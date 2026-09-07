@@ -24,11 +24,15 @@ object GateEngine {
 
         // Situational gates for capabilities needing special access / not yet wired
         when (cap.id) {
-            "read_notifications" -> return GateResult.Denied(
-                ReasonCode.SPECIAL_ACCESS_NOT_ENABLED, cap, true, false,
-                "Grant Notification access to androidmcp in Android settings (sideloaded apps must first tap 'Allow restricted settings').",
-                true,
-            )
+            "read_notifications" -> {
+                val enabled = androidx.core.app.NotificationManagerCompat
+                    .getEnabledListenerPackages(ctx).contains(ctx.packageName)
+                if (!enabled) return GateResult.Denied(
+                    ReasonCode.SPECIAL_ACCESS_NOT_ENABLED, cap, true, false,
+                    "Grant Notification access to androidmcp in Android settings (Notifications → Notification access; sideloaded apps must first tap 'Allow restricted settings').",
+                    true,
+                )
+            }
             "list_files" -> return GateResult.Denied(
                 ReasonCode.NOT_IMPLEMENTED, cap, true, false,
                 "File access via the folder picker (SAF) is not wired up in this build yet.",

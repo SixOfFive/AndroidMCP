@@ -174,8 +174,8 @@ Each is a default-off gated feature with a plain "why / why-not":
 - [x] Core: gate engine, config store, hashed token store, audit log
 - [x] Server: Ktor foreground service, MCP JSON-RPC over Streamable HTTP, bearer auth
 - [x] MVP capabilities: `list_capabilities`, `device_info`, `battery_status`,
-      `read_sensors`, `get_location`, `post_notification` (working); `read_notifications`
-      + `list_files` gated as not-yet-wired
+      `read_sensors`, `get_location`, `post_notification`, `read_notifications`
+      (Notification Listener — verified reading the live shade); `list_files` (SAF) pending
 - [x] Compose config UI (master switch, per-capability toggles + *why*, token manager, audit)
 - [x] Install & verify against a real MCP client — auth, `tools/list`, an enabled
       call, and a gated structured refusal all confirmed on the device

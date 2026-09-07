@@ -71,7 +71,7 @@ object Mcp {
                 if (cap.id == "write_clipboard") {
                     putJsonObject("text") { put("type", "string") }
                 }
-                if (cap.id == "read_sms" || cap.id == "read_call_log") {
+                if (cap.id == "read_sms" || cap.id == "read_call_log" || cap.id == "read_notifications") {
                     putJsonObject("limit") { put("type", "integer") }
                 }
                 if (cap.id == "record_audio") {
@@ -198,6 +198,7 @@ object Mcp {
         "read_call_log" -> listOf(textBlk(callLog(ctx, args)))
         "read_clipboard" -> listOf(textBlk(clipboardRead(ctx)))
         "write_clipboard" -> listOf(textBlk(clipboardWrite(ctx, args)))
+        "read_notifications" -> listOf(textBlk(readNotifications(args)))
         else -> listOf(textBlk("not implemented: ${cap.id}"))
     }
 
@@ -401,5 +402,11 @@ object Mcp {
         val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
         cm.setPrimaryClip(android.content.ClipData.newPlainText("androidmcp", text))
         return "clipboard set to ${text.length} chars (background writes may be silently restricted on some Android versions)"
+    }
+
+    private fun readNotifications(args: JsonObject): String {
+        val limit = args["limit"]?.jsonPrimitive?.intOrNull ?: 20
+        return McpNotificationListener.readActive(limit)
+            ?: "notification listener isn't connected yet — toggle Notification access off/on for androidmcp, then retry"
     }
 }
