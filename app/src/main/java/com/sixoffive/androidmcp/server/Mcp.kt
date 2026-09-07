@@ -74,6 +74,9 @@ object Mcp {
                 if (cap.id == "read_sms" || cap.id == "read_call_log") {
                     putJsonObject("limit") { put("type", "integer") }
                 }
+                if (cap.id == "record_audio") {
+                    putJsonObject("seconds") { put("type", "integer") }
+                }
             }
         })
     }
@@ -117,6 +120,9 @@ object Mcp {
     private fun textBlk(s: String): JsonObject = buildJsonObject { put("type", "text"); put("text", s) }
     private fun imageBlk(b64: String, mime: String): JsonObject = buildJsonObject {
         put("type", "image"); put("data", b64); put("mimeType", mime)
+    }
+    private fun audioBlk(b64: String, mime: String): JsonObject = buildJsonObject {
+        put("type", "audio"); put("data", b64); put("mimeType", mime)
     }
 
     private fun successResult(content: List<JsonObject>): JsonObject = buildJsonObject {
@@ -186,6 +192,7 @@ object Mcp {
         "get_location" -> listOf(textBlk(location(ctx)))
         "post_notification" -> listOf(textBlk(postNotification(ctx, args)))
         "take_photo" -> takePhoto(ctx, args)
+        "record_audio" -> recordAudio(ctx, args)
         "read_sms" -> listOf(textBlk(smsRead(ctx, args)))
         "read_call_log" -> listOf(textBlk(callLog(ctx, args)))
         "read_clipboard" -> listOf(textBlk(clipboardRead(ctx)))
@@ -301,6 +308,21 @@ object Mcp {
         return listOf(
             textBlk("Captured ${opts.outWidth}x${opts.outHeight} JPEG from the $facing camera (${jpeg.size} bytes)."),
             imageBlk(b64, "image/jpeg"),
+        )
+    }
+
+    private suspend fun recordAudio(ctx: Context, args: JsonObject): List<JsonObject> {
+        val secs = (args["seconds"]?.jsonPrimitive?.intOrNull ?: 5).coerceIn(1, 30)
+        val bytes = AudioCapture.record(ctx, secs)
+            ?: return listOf(textBlk("Audio capture failed — the mic may be in use, or the app is backgrounded (open androidmcp and retry)."))
+        runCatching {
+            val dir = java.io.File(ctx.filesDir, "audio").apply { mkdirs() }
+            java.io.File(dir, "last.m4a").writeBytes(bytes)
+        }
+        val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+        return listOf(
+            textBlk("Recorded ${secs}s of audio (${bytes.size} bytes, AAC/MP4)."),
+            audioBlk(b64, "audio/mp4"),
         )
     }
 

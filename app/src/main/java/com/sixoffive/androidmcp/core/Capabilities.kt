@@ -98,6 +98,15 @@ object Capabilities {
             requiresForegroundNote = true,
         ),
         CapabilityMeta(
+            id = "record_audio", title = "Record audio",
+            why = listOf("Record a short microphone clip on request", "Let a client hear a sound or capture a note"),
+            permissions = listOf("android.permission.RECORD_AUDIO"),
+            dataExposed = "Audio from the microphone (anything within earshot)",
+            risk = "High — can record conversations and ambient sound",
+            defaultOn = false, phase = Phase.V1_1, highImpact = true,
+            requiresForegroundNote = true,
+        ),
+        CapabilityMeta(
             id = "read_sms", title = "Read SMS",
             why = listOf("Read recent received text messages", "Look up a code or message a client needs"),
             permissions = listOf("android.permission.READ_SMS"),
