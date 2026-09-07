@@ -195,7 +195,8 @@ Each is a default-off gated feature with a plain "why / why-not":
 - [x] v1.1 `capture_screenshot` — MediaProjection: UI-initiated consent, then
       service-side `getMediaProjection` under a mediaProjection-typed FGS; captures
       a frame via VirtualDisplay+ImageReader. Verified — real screen JPEG captured
-- [ ] v1.1 remaining: `run_shortcut`
+- [x] v1.1 `run_shortcut` — launches an app by package; the approval tap grants
+      the activity-start window, so it works. Verified launching Settings
 - [x] Installer script (`scripts/build-and-install.sh`) — builds + installs to connected devices
 
 ---

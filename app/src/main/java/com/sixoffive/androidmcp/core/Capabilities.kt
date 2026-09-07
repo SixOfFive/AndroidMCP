@@ -151,6 +151,14 @@ object Capabilities {
             defaultOn = false, phase = Phase.V1_1, highImpact = true,
             requiresForegroundNote = true,
         ),
+        CapabilityMeta(
+            id = "run_shortcut", title = "Run shortcut",
+            why = listOf("Launch an app by package name on request"),
+            permissions = emptyList(),
+            dataExposed = "Nothing is read; performs an action you approve",
+            risk = "Medium — performs actions on your device",
+            defaultOn = false, phase = Phase.V1_1, highImpact = true,
+        ),
     )
 
     fun byId(id: String): CapabilityMeta? = REGISTRY.firstOrNull { it.id == id }

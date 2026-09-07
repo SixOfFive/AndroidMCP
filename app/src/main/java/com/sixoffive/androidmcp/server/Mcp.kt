@@ -77,6 +77,9 @@ object Mcp {
                 if (cap.id == "list_files") {
                     putJsonObject("uri") { put("type", "string") }
                 }
+                if (cap.id == "run_shortcut") {
+                    putJsonObject("package") { put("type", "string") }
+                }
                 if (cap.id == "record_audio") {
                     putJsonObject("seconds") { put("type", "integer") }
                 }
@@ -203,6 +206,7 @@ object Mcp {
         "write_clipboard" -> listOf(textBlk(clipboardWrite(ctx, args)))
         "read_notifications" -> listOf(textBlk(readNotifications(args)))
         "list_files" -> listOf(textBlk(filesRunner(ctx, args)))
+        "run_shortcut" -> listOf(textBlk(runShortcut(ctx, args)))
         else -> listOf(textBlk("not implemented: ${cap.id}"))
     }
 
@@ -417,5 +421,19 @@ object Mcp {
     private fun filesRunner(ctx: Context, args: JsonObject): String {
         val uri = args["uri"]?.jsonPrimitive?.contentOrNull
         return if (uri.isNullOrBlank()) FilesAccess.listAll(ctx) else FilesAccess.read(ctx, uri)
+    }
+
+    private fun runShortcut(ctx: Context, args: JsonObject): String {
+        val pkg = args["package"]?.jsonPrimitive?.contentOrNull
+            ?: return "provide a 'package' to launch (e.g. com.android.settings)"
+        val intent = ctx.packageManager.getLaunchIntentForPackage(pkg)
+            ?: return "app not installed or not launchable: $pkg"
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return try {
+            ctx.startActivity(intent)
+            "launched $pkg (note: Android may block launching apps while androidmcp is in the background)"
+        } catch (t: Throwable) {
+            "could not launch $pkg: ${t.message}"
+        }
     }
 }
