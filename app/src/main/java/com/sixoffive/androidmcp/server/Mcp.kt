@@ -68,6 +68,12 @@ object Mcp {
                 if (cap.id == "take_photo") {
                     putJsonObject("camera") { put("type", "string"); putJsonArray("enum") { add("back"); add("front") } }
                 }
+                if (cap.id == "write_clipboard") {
+                    putJsonObject("text") { put("type", "string") }
+                }
+                if (cap.id == "read_sms" || cap.id == "read_call_log") {
+                    putJsonObject("limit") { put("type", "integer") }
+                }
             }
         })
     }
@@ -180,6 +186,10 @@ object Mcp {
         "get_location" -> listOf(textBlk(location(ctx)))
         "post_notification" -> listOf(textBlk(postNotification(ctx, args)))
         "take_photo" -> takePhoto(ctx, args)
+        "read_sms" -> listOf(textBlk(smsRead(ctx, args)))
+        "read_call_log" -> listOf(textBlk(callLog(ctx, args)))
+        "read_clipboard" -> listOf(textBlk(clipboardRead(ctx)))
+        "write_clipboard" -> listOf(textBlk(clipboardWrite(ctx, args)))
         else -> listOf(textBlk("not implemented: ${cap.id}"))
     }
 
@@ -292,5 +302,62 @@ object Mcp {
             textBlk("Captured ${opts.outWidth}x${opts.outHeight} JPEG from the $facing camera (${jpeg.size} bytes)."),
             imageBlk(b64, "image/jpeg"),
         )
+    }
+
+    private fun smsRead(ctx: Context, args: JsonObject): String {
+        val limit = args["limit"]?.jsonPrimitive?.intOrNull ?: 20
+        val sb = StringBuilder(); var n = 0
+        val cur = ctx.contentResolver.query(
+            android.net.Uri.parse("content://sms/inbox"),
+            arrayOf("address", "body", "date"), null, null, "date DESC",
+        ) ?: return "SMS provider not accessible"
+        cur.use { c ->
+            val ai = c.getColumnIndex("address"); val bi = c.getColumnIndex("body"); val di = c.getColumnIndex("date")
+            val fmt = java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.US)
+            while (c.moveToNext() && n < limit) {
+                val date = fmt.format(java.util.Date(c.getLong(di)))
+                val body = c.getString(bi)?.replace("\n", " ")?.take(200)
+                sb.append("[$date] ${c.getString(ai)}: $body\n"); n++
+            }
+        }
+        return if (n == 0) "no messages" else sb.toString().trim()
+    }
+
+    private fun callLog(ctx: Context, args: JsonObject): String {
+        val limit = args["limit"]?.jsonPrimitive?.intOrNull ?: 20
+        val sb = StringBuilder(); var n = 0
+        val cur = ctx.contentResolver.query(
+            android.provider.CallLog.Calls.CONTENT_URI,
+            arrayOf(
+                android.provider.CallLog.Calls.NUMBER,
+                android.provider.CallLog.Calls.TYPE,
+                android.provider.CallLog.Calls.DATE,
+                android.provider.CallLog.Calls.DURATION,
+            ), null, null, android.provider.CallLog.Calls.DATE + " DESC",
+        ) ?: return "call log not accessible"
+        cur.use { c ->
+            val fmt = java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.US)
+            while (c.moveToNext() && n < limit) {
+                val type = when (c.getInt(1)) { 1 -> "in"; 2 -> "out"; 3 -> "missed"; else -> "other" }
+                val date = fmt.format(java.util.Date(c.getLong(2)))
+                sb.append("[$date] $type ${c.getString(0)} (${c.getLong(3)}s)\n"); n++
+            }
+        }
+        return if (n == 0) "no calls" else sb.toString().trim()
+    }
+
+    private fun clipboardRead(ctx: Context): String {
+        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        val clip = cm.primaryClip
+        if (clip == null || clip.itemCount == 0)
+            return "clipboard is empty, or not readable from the background — Android 10+ only lets the foreground app read the clipboard, so open androidmcp and retry"
+        return clip.getItemAt(0).coerceToText(ctx).toString()
+    }
+
+    private fun clipboardWrite(ctx: Context, args: JsonObject): String {
+        val text = args["text"]?.jsonPrimitive?.contentOrNull ?: return "no 'text' argument provided"
+        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("androidmcp", text))
+        return "clipboard set to ${text.length} chars (background writes may be silently restricted on some Android versions)"
     }
 }

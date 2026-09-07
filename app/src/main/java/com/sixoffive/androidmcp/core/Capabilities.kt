@@ -97,6 +97,39 @@ object Capabilities {
             defaultOn = false, phase = Phase.V1_1, highImpact = true,
             requiresForegroundNote = true,
         ),
+        CapabilityMeta(
+            id = "read_sms", title = "Read SMS",
+            why = listOf("Read recent received text messages", "Look up a code or message a client needs"),
+            permissions = listOf("android.permission.READ_SMS"),
+            dataExposed = "The content and senders of your text messages",
+            risk = "High — texts carry 2FA codes, private conversations, and alerts",
+            defaultOn = false, phase = Phase.V1_1, highImpact = true,
+        ),
+        CapabilityMeta(
+            id = "read_call_log", title = "Read call log",
+            why = listOf("Read recent call history (numbers, in/out/missed, time)"),
+            permissions = listOf("android.permission.READ_CALL_LOG"),
+            dataExposed = "Who you called and who called you, and when",
+            risk = "High — reveals your contacts and communication patterns",
+            defaultOn = false, phase = Phase.V1_1, highImpact = true,
+        ),
+        CapabilityMeta(
+            id = "read_clipboard", title = "Read clipboard",
+            why = listOf("Read the current clipboard text on request"),
+            permissions = emptyList(),
+            dataExposed = "Whatever you last copied — often passwords or codes",
+            risk = "High — clipboards frequently hold secrets",
+            defaultOn = false, phase = Phase.V1_1, highImpact = true,
+            requiresForegroundNote = true,
+        ),
+        CapabilityMeta(
+            id = "write_clipboard", title = "Write clipboard",
+            why = listOf("Set the clipboard text so you can paste it"),
+            permissions = emptyList(),
+            dataExposed = "Nothing is read; sets content the model provides",
+            risk = "Low",
+            defaultOn = false, phase = Phase.V1_1, highImpact = false,
+        ),
     )
 
     fun byId(id: String): CapabilityMeta? = REGISTRY.firstOrNull { it.id == id }

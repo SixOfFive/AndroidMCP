@@ -186,8 +186,10 @@ Each is a default-off gated feature with a plain "why / why-not":
 - [ ] `read_notifications` (Notification Listener) + `list_files` (SAF)
 - [x] v1.1 `take_photo` — Camera2 headless capture, returns an MCP image content
       block, approval-gated; verified on device (real 1080×1440 JPEG captured)
-- [ ] v1.1 remaining: `record_audio`, `capture_screenshot`, clipboard,
-      `read_sms`/`read_call_log`, `run_shortcut`
+- [x] v1.1 `read_sms`, `read_call_log`, `read_clipboard`, `write_clipboard` —
+      content-provider reads + clipboard; `read_sms` verified (real messages,
+      approval-gated); clipboard read is honestly foreground-limited
+- [ ] v1.1 remaining: `record_audio`, `capture_screenshot`, `run_shortcut`
 - [x] Installer script (`scripts/build-and-install.sh`) — builds + installs to connected devices
 
 ---
