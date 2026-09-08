@@ -10,6 +10,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -37,6 +38,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -89,6 +91,8 @@ private fun ServerScreen() {
     var permRefresh by remember { mutableIntStateOf(0) }
     var showBootWarning by remember { mutableStateOf(false) }
     var resumedOnce by remember { mutableStateOf(false) }
+    // Which capability categories are expanded (empty = all collapsed, keeping the long list compact).
+    val expandedCats = remember { mutableStateMapOf<String, Boolean>() }
 
     // Resume-on-launch: if the user Saved an armed start-on-boot config with the server enabled,
     // bring the server back up when the app is opened (mirrors the boot receiver). Runs once.
@@ -415,18 +419,39 @@ private fun ServerScreen() {
             }
 
             // ---- capabilities ----
-            item { Text("Capabilities", style = MaterialTheme.typography.titleMedium) }
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Capabilities", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                    TextButton(onClick = { Capabilities.CATEGORIES.forEach { expandedCats[it.id] = true } }) { Text("Expand all") }
+                    TextButton(onClick = { expandedCats.clear() }) { Text("Collapse all") }
+                }
+            }
             Capabilities.CATEGORIES.forEach { catg ->
               val caps = Capabilities.inCategory(catg.id)
               if (caps.isEmpty()) return@forEach
+              val expanded = expandedCats[catg.id] ?: false
+              val onCount = caps.count { config.enabled.contains(it.id) || it.id == "list_capabilities" }
               item(key = "cat_${catg.id}") {
-                  Text(
-                      catg.label + "  (" + caps.count { config.enabled.contains(it.id) || it.id == "list_capabilities" } + "/" + caps.size + ")",
-                      style = MaterialTheme.typography.titleSmall,
-                      color = MaterialTheme.colorScheme.primary,
-                      modifier = Modifier.padding(top = 10.dp, bottom = 2.dp),
-                  )
+                  Row(
+                      Modifier.fillMaxWidth()
+                          .clickable { expandedCats[catg.id] = !expanded }
+                          .padding(top = 10.dp, bottom = 4.dp),
+                      verticalAlignment = Alignment.CenterVertically,
+                  ) {
+                      Text(
+                          (if (expanded) "▾  " else "▸  ") + catg.label,
+                          Modifier.weight(1f),
+                          style = MaterialTheme.typography.titleSmall,
+                          color = MaterialTheme.colorScheme.primary,
+                      )
+                      Text(
+                          if (onCount > 0) "$onCount / ${caps.size} on" else "0 / ${caps.size}",
+                          style = MaterialTheme.typography.labelSmall,
+                          color = if (onCount > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                      )
+                  }
               }
+              if (expanded) {
               items(caps, key = { it.id }) { cap ->
                 val enabled = config.enabled.contains(cap.id) || cap.id == "list_capabilities"
                 val permsOk = granted(cap.permissions)
@@ -481,6 +506,7 @@ private fun ServerScreen() {
                         }
                     }
                 }
+            }
             }
             }
 
