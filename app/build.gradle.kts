@@ -70,5 +70,7 @@ dependencies {
     implementation(libs.ktor.server.cio)
     implementation(libs.ktor.server.content.negotiation)
     implementation(libs.ktor.serialization.json)
+    implementation(libs.ktor.tls.certs)
+    implementation(libs.ktor.server.netty)
     implementation(libs.kotlinx.serialization.json)
 }

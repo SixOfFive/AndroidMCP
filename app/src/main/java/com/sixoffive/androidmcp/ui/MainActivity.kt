@@ -198,6 +198,28 @@ private fun ServerScreen() {
                         }
                         Switch(checked = config.allowBrowser, onCheckedChange = { ConfigStore.setAllowBrowser(it) })
                     }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Media as links", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                "Return photos / audio / screenshots as a short-lived fetchable URL (resource_link) instead of inline base64 — much smaller replies. The link carries an unguessable one-time key (not your token) and expires in 10 minutes.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(checked = config.mediaAsLinks, onCheckedChange = { ConfigStore.setMediaAsLinks(it) })
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("HTTPS (self-signed TLS)", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                "Serve over HTTPS with a self-signed certificate. Clients must trust it (or skip verification). Redundant on Tailscale, which is already encrypted. Restart the server to apply.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(checked = config.tls, onCheckedChange = { ConfigStore.setTls(it) })
+                    }
                 }
             }
 
@@ -331,6 +353,7 @@ private fun ServerScreen() {
             items(Capabilities.REGISTRY) { cap ->
                 val enabled = config.enabled.contains(cap.id) || cap.id == "list_capabilities"
                 val permsOk = granted(cap.permissions)
+                val hwMissing = com.sixoffive.androidmcp.core.HardwareCheck.missing(ctx, cap.id)
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -344,15 +367,39 @@ private fun ServerScreen() {
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Switch(
-                                checked = enabled,
-                                enabled = cap.id != "list_capabilities",
+                                checked = enabled && hwMissing == null,
+                                enabled = cap.id != "list_capabilities" && hwMissing == null,
                                 onCheckedChange = { ConfigStore.setEnabled(cap.id, it) },
                             )
                         }
-                        if (enabled && cap.permissions.isNotEmpty() && !permsOk) {
+                        if (hwMissing != null) {
+                            Spacer(Modifier.height(6.dp))
+                            Text("Not available on this device — $hwMissing.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.error)
+                        }
+                        if (enabled && hwMissing == null && cap.permissions.isNotEmpty() && !permsOk) {
                             Spacer(Modifier.height(8.dp))
                             OutlinedButton(onClick = { permLauncher.launch(cap.permissions.toTypedArray()) }) {
                                 Text("Grant Android permission")
+                            }
+                        }
+                        if (enabled && hwMissing == null && cap.highImpact) {
+                            permRefresh // recompute armed state after a tap
+                            val armed = com.sixoffive.androidmcp.server.ApprovalManager.isArmed(cap.id)
+                            Spacer(Modifier.height(4.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    if (armed) "Armed — approvals skipped for a window" else "Per-call approval required",
+                                    Modifier.weight(1f),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (armed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                if (armed) {
+                                    TextButton(onClick = { com.sixoffive.androidmcp.server.ApprovalManager.disarm(cap.id); permRefresh++ }) { Text("Disarm") }
+                                } else {
+                                    TextButton(onClick = { com.sixoffive.androidmcp.server.ApprovalManager.arm(cap.id, 10); permRefresh++ }) { Text("Arm 10 min") }
+                                }
                             }
                         }
                     }

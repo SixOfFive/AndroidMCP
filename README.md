@@ -90,9 +90,11 @@ Reason codes: `FEATURE_DISABLED_IN_APP`, `OS_PERMISSION_NOT_GRANTED`,
 
 ## Capabilities
 
-All default-OFF except `list_capabilities`. The 29 below need **no root**; three optional
+All default-OFF except `list_capabilities`. The 35 below need **no root**; five optional
 **elevated** tools (Shizuku *or* root) are covered under
-[Root vs non-root](#root-vs-non-root). All device-verified.
+[Root vs non-root](#root-vs-non-root). All device-verified. Tools whose hardware is
+absent (e.g. `dial`/`vibrate` on a Wi-Fi-only tablet) are auto-marked unavailable and
+refuse with `HARDWARE_UNAVAILABLE`.
 
 | Tool | Does | Backing permission / access | High-impact |
 |---|---|---|:---:|
@@ -124,8 +126,16 @@ All default-OFF except `list_capabilities`. The 29 below need **no root**; three
 | `dial` | Pre-fill the dialer (does not call) | none | ✓ |
 | `get_contacts` | Look up contacts (name + numbers) | `READ_CONTACTS` | ✓ |
 | `read_calendar` | Upcoming calendar events | `READ_CALENDAR` | ✓ |
+| `create_calendar_event` | Insert a calendar event | `READ_CALENDAR` + `WRITE_CALENDAR` | ✓ |
+| `set_volume` | Set a stream's volume | `MODIFY_AUDIO_SETTINGS` (install-time) | ✓ |
+| `media_control` | Send a media key (play/pause/next…) | none | ✓ |
+| `toast` | Show a toast on screen | none | |
+| `share_text` | Open the share sheet with text | none | ✓ |
+| `open_settings` | Open a Settings screen | none | |
 
-Photos/audio/screenshots return proper MCP `image`/`audio` content blocks.
+Photos/audio/screenshots return proper MCP `image`/`audio` content blocks — or, with
+**Media as links** on, a short-lived `resource_link` URL the client fetches (an unguessable
+one-time key, 10-minute TTL) instead of multi-MB inline base64.
 
 > **Approvals need notifications.** The high-impact tools (✓) prompt for per-call
 > approval via a notification. On Android 13+ that requires the `POST_NOTIFICATIONS`
@@ -155,7 +165,9 @@ Three opt-in elevated capabilities are implemented: **`root_screenshot`** (silen
 `screencap`, no consent prompt or cast indicator), **`root_shell`** (an arbitrary
 shell command — any-file read, `dumpsys`, `pm`, `settings`, and more), and
 **`elevated_input`** (system-wide `input` injection — tap / swipe / text / keyevent into
-*any* app, which a normal app cannot do).
+*any* app, which a normal app cannot do), **`elevated_current_app`** (the true foreground
+app/activity via `dumpsys`), and **`elevated_settings`** (read/write `system`/`secure`/`global`
+settings via `settings get`/`put`, with a read-back confirmation).
 Same model as everything else: default-off, in-app toggle + **elevated-access detection**
 + per-call approval. On a device with neither Shizuku nor root they appear in `tools/list`
 but return **`NOT_SUPPORTED_WITHOUT_ROOT`** (`retriable:false`) — verified, so nothing
@@ -271,7 +283,9 @@ tailnet-connected machine rather than exposing it publicly.
   no MCP tool can enable a capability, mint a token, or widen the bind interface.
 - Bind to **loopback** or the **Tailscale** interface; `lan` binds `0.0.0.0` and is the
   warned option. On Tailscale the hop is already WireGuard-encrypted; the bearer token is
-  defence-in-depth + client attribution. (Optional TLS is designed but not yet wired.)
+  defence-in-depth + client attribution. **Optional HTTPS** (self-signed, via the Netty
+  engine) can be toggled on — mostly useful for a bare-LAN bind, since Tailscale already
+  encrypts; clients must trust the self-signed cert or skip verification.
 - Tokens are stored **hashed** (SHA-256, never plaintext); `allowBackup=false`;
   CSPRNG-generated. Every tool call is written to an in-app **audit log**.
 
@@ -279,10 +293,11 @@ tailnet-connected machine rather than exposing it publicly.
 
 ## Caveats
 
-Not yet production-hardened: the "armed for N minutes" approval window has backend
-support but no UI toggle; media returns inline base64 rather than `resource_link`; TLS
-is designed but not wired; the capability registry is static (not yet auto-hidden per
-hardware). Before a first real client, pin the transport to the live MCP spec at
+The armed-window, `resource_link`, TLS, and hardware-aware-registry items are now done
+(see Roadmap). Remaining rough edges: the self-signed TLS cert is regenerated each start,
+so clients must skip verification (or a pinned-cert flow is needed) — and TLS pulls in the
+Netty engine (larger); media-as-links keeps bytes only in memory with a 10-minute TTL.
+Before a first real client, pin the transport to the live MCP spec at
 `modelcontextprotocol.io` — the server was verified with `curl` (spec-compatible).
 
 ---
@@ -296,7 +311,14 @@ hardware). Before a first real client, pin the transport to the live MCP spec at
 - [x] Bind selector; verified over adb-forward, LAN, and Tailscale
 - [x] Optional root tier (`root_screenshot`, `root_shell`) — gated to
       `NOT_SUPPORTED_WITHOUT_ROOT` until rooted; verified refusing on a stock device
-- [ ] "Armed window" UI, `resource_link` media, optional TLS, hardware-aware registry
+- [x] Elevated tier generalised to **Shizuku** (non-destructive) *or* root
+- [x] **"Armed window" UI** — per-capability "Arm 10 min" skips approval for a window
+- [x] **`resource_link` media** — opt-in fetchable URL (capability nonce, 10-min TTL)
+- [x] **Optional TLS** — self-signed HTTPS via the Netty engine (CIO stays HTTP);
+      verified `https://` initialize on-device
+- [x] **Hardware-aware registry** — absent-hardware tools auto-marked `HARDWARE_UNAVAILABLE`
+- [ ] `resource_link` for very large media by default; hardened cert trust flow; TLS on a
+      client-pinned cert
 
 ---
 

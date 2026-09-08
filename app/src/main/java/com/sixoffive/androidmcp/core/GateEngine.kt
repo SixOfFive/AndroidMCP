@@ -11,6 +11,15 @@ import androidx.core.content.ContextCompat
 object GateEngine {
 
     fun evaluate(ctx: Context, cap: CapabilityMeta): GateResult {
+        // Gate 0 — hardware. A capability whose hardware is absent can never succeed, so refuse
+        // it clearly (and the UI greys it out) rather than pretending it can be enabled.
+        HardwareCheck.missing(ctx, cap.id)?.let { why ->
+            return GateResult.Denied(
+                ReasonCode.HARDWARE_UNAVAILABLE, cap, ConfigStore.isEnabled(cap.id), false,
+                "Not available on this device ($why).", retriable = false,
+            )
+        }
+
         // Gate 1 — in-app toggle
         if (!ConfigStore.isEnabled(cap.id)) {
             return GateResult.Denied(

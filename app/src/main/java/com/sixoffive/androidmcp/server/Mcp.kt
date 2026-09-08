@@ -49,18 +49,20 @@ object Mcp {
             "notifications/initialized", "notifications/cancelled" -> null
             "ping" -> result(id, buildJsonObject {})
             "tools/list" -> result(id, buildJsonObject {
-                putJsonArray("tools") { Capabilities.REGISTRY.forEach { add(toolDef(it)) } }
+                putJsonArray("tools") { Capabilities.REGISTRY.forEach { add(toolDef(ctx, it)) } }
             })
             "tools/call" -> toolsCall(ctx, id, root, client)
             else -> error(id, -32601, "Method not found: $method")
         }
     }
 
-    private fun toolDef(cap: CapabilityMeta): JsonObject = buildJsonObject {
+    private fun toolDef(ctx: Context, cap: CapabilityMeta): JsonObject = buildJsonObject {
         put("name", cap.id)
         val status = if (ConfigStore.isEnabled(cap.id)) "enabled" else "disabled"
+        val hw = com.sixoffive.androidmcp.core.HardwareCheck.missing(ctx, cap.id)
         put("description", "${cap.title}. Why: ${cap.why.joinToString("; ")}. " +
-            "Exposes: ${cap.dataExposed}. [currently $status]")
+            "Exposes: ${cap.dataExposed}. [currently $status]" +
+            (if (hw != null) " [unavailable on this device: $hw]" else ""))
         put("inputSchema", buildJsonObject {
             put("type", "object")
             putJsonObject("properties") {
@@ -123,6 +125,38 @@ object Mcp {
                     putJsonObject("text") { put("type", "string") }
                     putJsonObject("keycode") { put("type", "string") }
                 }
+                if (cap.id == "set_volume") {
+                    putJsonObject("stream") { put("type", "string"); putJsonArray("enum") { add("music"); add("ring"); add("alarm"); add("notification"); add("system"); } }
+                    putJsonObject("level") { put("type", "integer") }
+                    putJsonObject("show_ui") { put("type", "boolean") }
+                }
+                if (cap.id == "media_control") {
+                    putJsonObject("action") { put("type", "string"); putJsonArray("enum") { add("play"); add("pause"); add("playpause"); add("next"); add("previous"); add("stop"); } }
+                }
+                if (cap.id == "toast") {
+                    putJsonObject("text") { put("type", "string") }
+                    putJsonObject("long") { put("type", "boolean") }
+                }
+                if (cap.id == "share_text") {
+                    putJsonObject("text") { put("type", "string") }
+                    putJsonObject("subject") { put("type", "string") }
+                }
+                if (cap.id == "open_settings") {
+                    putJsonObject("screen") { put("type", "string"); putJsonArray("enum") { add("wifi"); add("bluetooth"); add("location"); add("display"); add("sound"); add("apps"); add("app_details"); add("battery"); add("date"); add("security"); add("home"); } }
+                }
+                if (cap.id == "create_calendar_event") {
+                    putJsonObject("title") { put("type", "string") }
+                    putJsonObject("start_epoch_ms") { put("type", "integer") }
+                    putJsonObject("duration_minutes") { put("type", "integer") }
+                    putJsonObject("location") { put("type", "string") }
+                    putJsonObject("calendar_id") { put("type", "integer") }
+                }
+                if (cap.id == "elevated_settings") {
+                    putJsonObject("action") { put("type", "string"); putJsonArray("enum") { add("get"); add("put"); } }
+                    putJsonObject("namespace") { put("type", "string"); putJsonArray("enum") { add("system"); add("secure"); add("global"); } }
+                    putJsonObject("key") { put("type", "string") }
+                    putJsonObject("value") { put("type", "string") }
+                }
             }
         })
     }
@@ -170,6 +204,22 @@ object Mcp {
     private fun audioBlk(b64: String, mime: String): JsonObject = buildJsonObject {
         put("type", "audio"); put("data", b64); put("mimeType", mime)
     }
+    private fun resourceLinkBlk(uri: String, name: String, mime: String): JsonObject = buildJsonObject {
+        put("type", "resource_link"); put("uri", uri); put("name", name); put("mimeType", mime)
+    }
+
+    /** Inline base64 (default) or a fetchable resource_link (per the mediaAsLinks toggle). */
+    private fun mediaBlocks(bytes: ByteArray, mime: String, name: String, isImage: Boolean): List<JsonObject> =
+        if (ConfigStore.current.mediaAsLinks) {
+            val (mid, nonce) = MediaStore.put(bytes, mime)
+            val scheme = if (ConfigStore.current.tls) "https" else "http"
+            // reachableHost, not bindHost: LAN binds 0.0.0.0 but the fetchable address is the LAN IP.
+            val host = Net.reachableHost(ConfigStore.current.bind)
+            listOf(resourceLinkBlk("$scheme://$host:${ConfigStore.current.port}/media/$mid?k=$nonce", name, mime))
+        } else {
+            val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+            listOf(if (isImage) imageBlk(b64, mime) else audioBlk(b64, mime))
+        }
 
     private fun successResult(content: List<JsonObject>): JsonObject = buildJsonObject {
         putJsonArray("content") { content.forEach { add(it) } }
@@ -261,6 +311,14 @@ object Mcp {
         "get_contacts" -> listOf(textBlk(contactsRead(ctx, args)))
         "read_calendar" -> listOf(textBlk(calendarRead(ctx, args)))
         "elevated_input" -> listOf(textBlk(elevatedInput(ctx, args)))
+        "set_volume" -> listOf(textBlk(setVolume(ctx, args)))
+        "media_control" -> listOf(textBlk(mediaControl(ctx, args)))
+        "toast" -> listOf(textBlk(toast(ctx, args)))
+        "share_text" -> listOf(textBlk(shareText(ctx, args)))
+        "open_settings" -> listOf(textBlk(openSettings(ctx, args)))
+        "create_calendar_event" -> listOf(textBlk(createCalendarEvent(ctx, args)))
+        "elevated_current_app" -> listOf(textBlk(elevatedCurrentApp(ctx)))
+        "elevated_settings" -> listOf(textBlk(elevatedSettings(ctx, args)))
         "root_screenshot" -> rootScreenshot()
         "root_shell" -> listOf(textBlk(rootShell(args)))
         else -> listOf(textBlk("not implemented: ${cap.id}"))
@@ -370,11 +428,8 @@ object Mcp {
             val dir = java.io.File(ctx.filesDir, "photos").apply { mkdirs() }
             java.io.File(dir, "last.jpg").writeBytes(jpeg)
         }
-        val b64 = android.util.Base64.encodeToString(jpeg, android.util.Base64.NO_WRAP)
-        return listOf(
-            textBlk("Captured ${opts.outWidth}x${opts.outHeight} JPEG from the $facing camera (${jpeg.size} bytes)."),
-            imageBlk(b64, "image/jpeg"),
-        )
+        return listOf(textBlk("Captured ${opts.outWidth}x${opts.outHeight} JPEG from the $facing camera (${jpeg.size} bytes).")) +
+            mediaBlocks(jpeg, "image/jpeg", "photo-$facing.jpg", isImage = true)
     }
 
     private suspend fun recordAudio(ctx: Context, args: JsonObject): List<JsonObject> {
@@ -385,11 +440,8 @@ object Mcp {
             val dir = java.io.File(ctx.filesDir, "audio").apply { mkdirs() }
             java.io.File(dir, "last.m4a").writeBytes(bytes)
         }
-        val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
-        return listOf(
-            textBlk("Recorded ${secs}s of audio (${bytes.size} bytes, AAC/MP4)."),
-            audioBlk(b64, "audio/mp4"),
-        )
+        return listOf(textBlk("Recorded ${secs}s of audio (${bytes.size} bytes, AAC/MP4).")) +
+            mediaBlocks(bytes, "audio/mp4", "audio.m4a", isImage = false)
     }
 
     private suspend fun screenshot(ctx: Context): List<JsonObject> {
@@ -404,11 +456,8 @@ object Mcp {
             val dir = java.io.File(ctx.filesDir, "screens").apply { mkdirs() }
             java.io.File(dir, "last.jpg").writeBytes(jpeg)
         }
-        val b64 = android.util.Base64.encodeToString(jpeg, android.util.Base64.NO_WRAP)
-        return listOf(
-            textBlk("Captured screen ${opts.outWidth}x${opts.outHeight} (${jpeg.size} bytes)."),
-            imageBlk(b64, "image/jpeg"),
-        )
+        return listOf(textBlk("Captured screen ${opts.outWidth}x${opts.outHeight} (${jpeg.size} bytes).")) +
+            mediaBlocks(jpeg, "image/jpeg", "screen.jpg", isImage = true)
     }
 
     private fun smsRead(ctx: Context, args: JsonObject): String {
@@ -1010,11 +1059,389 @@ object Mcp {
         }
     }
 
+    // ---- set_volume ----
+    private fun setVolume(ctx: android.content.Context, args: kotlinx.serialization.json.JsonObject): String {
+        val am = ctx.getSystemService(android.content.Context.AUDIO_SERVICE) as? android.media.AudioManager
+            ?: return "audio service unavailable"
+        val streamName = args["stream"]?.jsonPrimitive?.contentOrNull?.trim()?.lowercase() ?: "music"
+        val streamConst = when (streamName) {
+            "music" -> android.media.AudioManager.STREAM_MUSIC
+            "ring" -> android.media.AudioManager.STREAM_RING
+            "alarm" -> android.media.AudioManager.STREAM_ALARM
+            "notification" -> android.media.AudioManager.STREAM_NOTIFICATION
+            "system" -> android.media.AudioManager.STREAM_SYSTEM
+            else -> return "unknown stream '$streamName' — use music, ring, alarm, notification, or system"
+        }
+        val level = args["level"]?.jsonPrimitive?.intOrNull
+            ?: return "provide an integer 'level'"
+        val showUi = args["show_ui"]?.jsonPrimitive?.booleanOrNull ?: false
+        val max = runCatching { am.getStreamMaxVolume(streamConst) }.getOrDefault(-1)
+        if (max < 0) return "could not read the max volume for the $streamName stream"
+        val old = runCatching { am.getStreamVolume(streamConst) }.getOrDefault(-1)
+        val target = level.coerceIn(0, max)
+        val flags = if (showUi) android.media.AudioManager.FLAG_SHOW_UI else 0
+        return try {
+            am.setStreamVolume(streamConst, target, flags)
+            val now = runCatching { am.getStreamVolume(streamConst) }.getOrDefault(target)
+            buildString {
+                append("$streamName volume: ${if (old < 0) "?" else old.toString()} -> $now (max $max)")
+                if (target != level) append("; requested $level clamped to 0..$max")
+                if (now != target) append("; system settled on $now (a DND/ringer policy, ring/notification coupling, or a fixed-volume output such as some Bluetooth/HDMI sinks can override the request)")
+            }
+        } catch (t: SecurityException) {
+            "could not set $streamName volume: ${t.message ?: "Notification Policy access required"} — this usually means Do Not Disturb is active; changing ring/notification volume (or dropping it to 0) while DND is on needs Notification Policy (DND) access"
+        } catch (t: Throwable) {
+            "could not set $streamName volume: ${t.message ?: t.javaClass.simpleName}"
+        }
+    }
+
+    // ---- media_control ----
+    private fun mediaControl(ctx: android.content.Context, args: kotlinx.serialization.json.JsonObject): String {
+        val am = ctx.getSystemService(android.content.Context.AUDIO_SERVICE) as? android.media.AudioManager
+            ?: return "audio service unavailable"
+        val action = args["action"]?.jsonPrimitive?.contentOrNull?.trim()?.lowercase()
+            ?: return "provide an 'action': play, pause, playpause, next, previous, or stop"
+        val keyCode = when (action) {
+            "play" -> android.view.KeyEvent.KEYCODE_MEDIA_PLAY
+            "pause" -> android.view.KeyEvent.KEYCODE_MEDIA_PAUSE
+            "playpause" -> android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
+            "next" -> android.view.KeyEvent.KEYCODE_MEDIA_NEXT
+            "previous" -> android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS
+            "stop" -> android.view.KeyEvent.KEYCODE_MEDIA_STOP
+            else -> return "unknown action '$action' — use play, pause, playpause, next, previous, or stop"
+        }
+        // dispatchMediaKeyEvent returns void and never reports whether an app consumed the key,
+        // so isMusicActive is the only cheap hint about whether a media session is likely present.
+        val musicActive = runCatching { am.isMusicActive }.getOrDefault(false)
+        // A media key needs a DOWN then an UP; some receivers ignore zero-timestamp events, so use
+        // the 5-arg KeyEvent constructor and stamp downTime/eventTime from SystemClock.uptimeMillis().
+        val ts = android.os.SystemClock.uptimeMillis()
+        return try {
+            am.dispatchMediaKeyEvent(android.view.KeyEvent(ts, ts, android.view.KeyEvent.ACTION_DOWN, keyCode, 0))
+            am.dispatchMediaKeyEvent(android.view.KeyEvent(ts, ts, android.view.KeyEvent.ACTION_UP, keyCode, 0))
+            buildString {
+                appendLine("sent media key: $action (${android.view.KeyEvent.keyCodeToString(keyCode)})")
+                append(
+                    if (musicActive)
+                        "a media session appears active (audio is playing) — the key should have reached it"
+                    else
+                        "no active audio detected — if no app holds a media session, the key may go nowhere (dispatch is fire-and-forget and reports no target)"
+                )
+            }
+        } catch (t: Throwable) {
+            "could not dispatch media key '$action': ${t.message ?: t.javaClass.simpleName}"
+        }
+    }
+
+    // ---- toast ----
+    private fun toast(ctx: android.content.Context, args: kotlinx.serialization.json.JsonObject): String {
+        val text = args["text"]?.jsonPrimitive?.contentOrNull
+            ?: return "provide a 'text' to show"
+        if (text.isEmpty()) return "provide a non-empty 'text' to show"
+        val long = args["long"]?.jsonPrimitive?.booleanOrNull ?: false
+        // Toast.makeText()/show() must run on a thread with a Looper; this runner is on the IO
+        // thread, so post to the main looper. Use applicationContext so the toast survives the
+        // runner returning. Text toasts are still allowed from the background on API 30+ (only
+        // custom-view toasts are blocked), so this works whether or not androidmcp is foreground.
+        // runCatching INSIDE the posted runnable: this runner returns BEFORE the runnable runs, so
+        // an exception here would land uncaught on the MAIN thread and crash the whole app; swallow
+        // it instead (the confirmation string is already best-effort, see gotchas).
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            runCatching {
+                android.widget.Toast.makeText(
+                    ctx.applicationContext,
+                    text,
+                    if (long) android.widget.Toast.LENGTH_LONG else android.widget.Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
+        return "showed a ${if (long) "long" else "short"} toast: \"${text.take(200)}\""
+    }
+
+    // ---- share_text ----
+    private fun shareText(ctx: android.content.Context, args: kotlinx.serialization.json.JsonObject): String {
+        val text = args["text"]?.jsonPrimitive?.contentOrNull
+            ?: return "provide 'text' to share"
+        if (text.isEmpty()) return "provide non-empty 'text' to share"
+        val subject = args["subject"]?.jsonPrimitive?.contentOrNull?.trim()?.takeUnless { it.isBlank() }
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, text)
+            if (subject != null) putExtra(Intent.EXTRA_SUBJECT, subject)
+        }
+        // createChooser is resolved by the system, so it works without QUERY_ALL_PACKAGES
+        // package-visibility even on API 30+. NEW_TASK is required to start an activity from a
+        // non-activity (Service/Application) context.
+        val chooser = Intent.createChooser(send, subject ?: "Share")
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return try {
+            ctx.startActivity(chooser)
+            buildString {
+                append("opened the share sheet with ${text.length} char(s) of text")
+                if (subject != null) append(" (subject: \"$subject\")")
+                append(" — note: Android may block launching the chooser while androidmcp is in the background")
+            }
+        } catch (t: android.content.ActivityNotFoundException) {
+            "no app can handle sharing text on this device"
+        } catch (t: Throwable) {
+            "could not open the share sheet: ${t.message}"
+        }
+    }
+
+    // ---- open_settings ----
+    private fun openSettings(ctx: android.content.Context, args: kotlinx.serialization.json.JsonObject): String {
+        val screen = args["screen"]?.jsonPrimitive?.contentOrNull?.trim()?.lowercase()
+            ?.takeUnless { it.isBlank() } ?: "apps"
+        // app_details needs the target package as intent data; everything else is action-only.
+        var data: android.net.Uri? = null
+        val action = when (screen) {
+            "wifi" -> android.provider.Settings.ACTION_WIFI_SETTINGS
+            "bluetooth" -> android.provider.Settings.ACTION_BLUETOOTH_SETTINGS
+            "location" -> android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS
+            "display" -> android.provider.Settings.ACTION_DISPLAY_SETTINGS
+            "sound" -> android.provider.Settings.ACTION_SOUND_SETTINGS
+            "apps" -> android.provider.Settings.ACTION_APPLICATION_SETTINGS
+            "app_details" -> {
+                data = android.net.Uri.fromParts("package", ctx.packageName, null)
+                android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+            }
+            "battery" -> android.provider.Settings.ACTION_BATTERY_SAVER_SETTINGS
+            "date" -> android.provider.Settings.ACTION_DATE_SETTINGS
+            "security" -> android.provider.Settings.ACTION_SECURITY_SETTINGS
+            "home" -> android.provider.Settings.ACTION_HOME_SETTINGS
+            else -> return "unknown screen '$screen' — use one of: wifi, bluetooth, location, " +
+                "display, sound, apps, app_details, battery, date, security, home"
+        }
+        val intent = Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (data != null) intent.data = data
+        return try {
+            ctx.startActivity(intent)
+            "opened the '$screen' settings screen (note: Android may block launching activities while androidmcp is in the background)"
+        } catch (t: android.content.ActivityNotFoundException) {
+            // Some OEMs/tablets lack a dedicated screen for a given action — fall back to the top-level Settings app.
+            try {
+                ctx.startActivity(Intent(android.provider.Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                "no dedicated '$screen' screen on this device — opened the main Settings app instead"
+            } catch (t2: Throwable) {
+                "could not open settings: ${t2.message}"
+            }
+        } catch (t: Throwable) {
+            "could not open the '$screen' settings screen: ${t.message}"
+        }
+    }
+
+    // ---- create_calendar_event ----
+    private fun createCalendarEvent(ctx: android.content.Context, args: kotlinx.serialization.json.JsonObject): String {
+        val title = args["title"]?.jsonPrimitive?.contentOrNull?.trim()?.takeUnless { it.isBlank() }
+            ?: return "provide a non-empty 'title' for the event"
+        // Epoch millis (~1.7e12) overflow a 32-bit Int, so read start as Long even though the schema
+        // type is "integer" (MCP has no separate long type). intOrNull would silently return null here.
+        val start = args["start_epoch_ms"]?.jsonPrimitive?.longOrNull
+            ?: (System.currentTimeMillis() + 60L * 60L * 1000L) // default: now + 1h
+        val durationMin = (args["duration_minutes"]?.jsonPrimitive?.intOrNull ?: 60).coerceIn(1, 60 * 24 * 30)
+        val end = start + durationMin.toLong() * 60L * 1000L
+        val location = args["location"]?.jsonPrimitive?.contentOrNull?.trim()?.takeUnless { it.isBlank() }
+        val requestedCalId = args["calendar_id"]?.jsonPrimitive?.longOrNull
+
+        // Resolve the target calendar (and, for the auto-pick, its display name). With no explicit
+        // calendar_id, pick the lowest-id calendar the app may write to (CALENDAR_ACCESS_LEVEL >=
+        // CAL_ACCESS_CONTRIBUTOR). Those access constants are compile-time ints, so inlining them into
+        // the selection carries no injection risk and sidesteps SQLite text/integer affinity on a bound
+        // arg. Enumerating Calendars is a READ on the provider, so this tool declares READ_CALENDAR too.
+        var calName: String? = null
+        val calendarId: Long = if (requestedCalId != null) {
+            requestedCalId
+        } else {
+            val projection = arrayOf(
+                android.provider.CalendarContract.Calendars._ID,
+                android.provider.CalendarContract.Calendars.CALENDAR_DISPLAY_NAME,
+            )
+            val sel = "${android.provider.CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL} >= " +
+                "${android.provider.CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR}"
+            val order = "${android.provider.CalendarContract.Calendars._ID} ASC"
+            val cur = runCatching {
+                ctx.contentResolver.query(
+                    android.provider.CalendarContract.Calendars.CONTENT_URI, projection, sel, null, order)
+            }.getOrNull()
+                ?: return "could not enumerate calendars - this needs READ_CALENDAR granted, or pass an explicit 'calendar_id'"
+            var found = -1L
+            cur.use { c ->
+                val idIx = c.getColumnIndex(android.provider.CalendarContract.Calendars._ID)
+                val nameIx = c.getColumnIndex(android.provider.CalendarContract.Calendars.CALENDAR_DISPLAY_NAME)
+                if (idIx >= 0 && c.moveToFirst()) {
+                    found = c.getLong(idIx)
+                    if (nameIx >= 0 && !c.isNull(nameIx)) calName = c.getString(nameIx)
+                }
+            }
+            if (found < 0L)
+                return "no writable calendar found on this device - add an account with a writable calendar, or pass an explicit 'calendar_id'"
+            found
+        }
+
+        val tz = java.util.TimeZone.getDefault().id
+        val values = android.content.ContentValues().apply {
+            put(android.provider.CalendarContract.Events.DTSTART, start)
+            put(android.provider.CalendarContract.Events.DTEND, end)
+            put(android.provider.CalendarContract.Events.TITLE, title)
+            if (location != null) put(android.provider.CalendarContract.Events.EVENT_LOCATION, location)
+            put(android.provider.CalendarContract.Events.CALENDAR_ID, calendarId)
+            put(android.provider.CalendarContract.Events.EVENT_TIMEZONE, tz)
+        }
+
+        val uri = try {
+            ctx.contentResolver.insert(android.provider.CalendarContract.Events.CONTENT_URI, values)
+        } catch (t: Throwable) {
+            return "could not create event: ${t.message} (calendar_id $calendarId may not be writable, or WRITE_CALENDAR is not granted)"
+        } ?: return "insert returned no URI - calendar_id $calendarId may be invalid or not writable"
+
+        val newId = uri.lastPathSegment ?: "?"
+        val fmt = java.text.SimpleDateFormat("EEE MMM d yyyy, HH:mm", java.util.Locale.US)
+        return buildString {
+            appendLine("created event #$newId")
+            appendLine("title: $title")
+            appendLine("when: ${fmt.format(java.util.Date(start))} - ${fmt.format(java.util.Date(end))} ($durationMin min, tz $tz)")
+            if (location != null) appendLine("location: $location")
+            append("calendar_id: $calendarId")
+            if (calName != null) append(" ($calName)")
+        }.trim()
+    }
+
+    // ---- elevated_current_app ----
+    private fun elevatedCurrentApp(ctx: android.content.Context): String {
+        // Matches a `package/activity` component in dumpsys output. Package is a dotted id
+        // (needs at least one dot, so bare `foo/bar` tokens and file paths do not match);
+        // activity may be shorthand (".Foo", relative to the package) or fully-qualified and may
+        // contain `$` for nested classes. The `$` is written as \$ so Kotlin does not treat it as
+        // a string template.
+        val comp = Regex("([a-zA-Z][a-zA-Z0-9_]*(?:\\.[a-zA-Z0-9_]+)+)/(\\.?[a-zA-Z0-9_.\$]+)")
+
+        fun parse(raw: String): Triple<String, String, String>? {
+            for (line in raw.split("\n").map { it.trim() }.filter { it.isNotEmpty() }) {
+                val m = comp.find(line) ?: continue
+                val pkg = m.groupValues[1]
+                var act = m.groupValues[2]
+                if (act.startsWith(".")) act = pkg + act
+                return Triple(pkg, act, line)
+            }
+            return null
+        }
+
+        // 1) The activity manager's resumed activity is the authoritative "foreground app".
+        //    stderr -> /dev/null so a dumpsys warning (which the root backend folds into stdout
+        //    via redirectErrorStream) cannot leak into the grep input or the raw fallback.
+        var used = "dumpsys activity activities 2>/dev/null | grep -E 'mResumedActivity|topResumedActivity|ResumedActivity'"
+        var raw = Elevated.exec(used)
+        var parsed = parse(raw)
+
+        // 2) Fall back to the window manager's focused window/app if that yielded nothing.
+        if (parsed == null) {
+            used = "dumpsys window 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp'"
+            raw = Elevated.exec(used)
+            parsed = parse(raw)
+        }
+
+        return buildString {
+            appendLine("source: ${Elevated.source()}")
+            appendLine("command: $used")
+            val p = parsed
+            if (p != null) {
+                appendLine("package: ${p.first}")
+                appendLine("activity: ${p.second}")
+                append("matched line: ${p.third.take(500)}")
+            } else {
+                appendLine("package: (could not parse)")
+                appendLine("activity: (could not parse)")
+                val trimmed = raw.trim()
+                append("raw output: " + if (trimmed.isEmpty())
+                    "(no output — screen may be locked/off, no foreground app, or the elevated backend blocked dumpsys)"
+                    else trimmed.take(1500))
+            }
+        }
+    }
+
+    // ---- elevated_settings ----
+    private fun elevatedSettings(ctx: android.content.Context, args: kotlinx.serialization.json.JsonObject): String {
+        val action = args["action"]?.jsonPrimitive?.contentOrNull?.trim()?.lowercase()
+            ?: return "provide 'action': get or put"
+        val ns = args["namespace"]?.jsonPrimitive?.contentOrNull?.trim()?.lowercase()
+            ?: return "provide 'namespace': system, secure, or global"
+        if (ns != "system" && ns != "secure" && ns != "global")
+            return "invalid namespace '$ns' — use system, secure, or global"
+        val key = args["key"]?.jsonPrimitive?.contentOrNull?.trim()
+            ?: return "provide a 'key'"
+        if (key.isEmpty()) return "provide a non-empty 'key'"
+
+        // Elevated.exec wraps the whole string in `sh -c`, so single-quote every token that
+        // carries user data to pass it verbatim (no word-splitting, no subshells).
+        fun sq(s: String): String = "'" + s.replace("'", "'\\''") + "'"
+
+        // `settings` is silent on a successful put and reports failures (unknown table, bad value,
+        // denied write) only on stderr — which the Shizuku backend does NOT capture, so a failed
+        // write would otherwise look like a silent success. Merge stderr into stdout and echo the
+        // exit code, then split them off. lastOrNull() picks the appended marker even if the value
+        // itself contains "__rc=". The root backend already merges stderr, so this works on both.
+        fun runRc(cmd: String): Pair<Int?, String> {
+            val raw = Elevated.exec("$cmd 2>&1; echo __rc=\$?")
+            val m = Regex("__rc=(-?\\d+)").findAll(raw).lastOrNull()
+            val rc = m?.groupValues?.get(1)?.toIntOrNull()
+            val out = (if (m != null) raw.substring(0, m.range.first) else raw).trim()
+            return rc to out
+        }
+
+        return when (action) {
+            "get" -> {
+                val cmd = "settings get $ns ${sq(key)}"
+                val (rc, out) = runRc(cmd)
+                buildString {
+                    appendLine("source: ${Elevated.source()}")
+                    appendLine("ran: $cmd")
+                    when {
+                        rc != null && rc != 0 ->
+                            append("error: 'settings get' exited $rc\n" +
+                                (if (out.isEmpty()) "(no error text captured)" else out.take(4000)))
+                        out.isEmpty() -> append("value: (empty)")
+                        out == "null" -> append("value: null  (unset, or the literal string \"null\" — 'settings get' cannot distinguish)")
+                        else -> append("value: ${out.take(4000)}")
+                    }
+                }
+            }
+            "put" -> {
+                val value = args["value"]?.jsonPrimitive?.contentOrNull
+                    ?: return "put needs a 'value'"
+                val cmd = "settings put $ns ${sq(key)} ${sq(value)}"
+                val (rc, out) = runRc(cmd)
+                // Read the value back so the caller sees the effective, stored result.
+                val after = runRc("settings get $ns ${sq(key)}").second
+                buildString {
+                    appendLine("source: ${Elevated.source()}")
+                    appendLine("ran: $cmd")
+                    if (rc != null && rc != 0)
+                        appendLine("write exited $rc (non-zero — the put may have been rejected)")
+                    if (out.isNotEmpty()) appendLine("output: ${out.take(2000)}")
+                    appendLine("read-back ($ns/$key): " + when {
+                        after.isEmpty() -> "(empty)"
+                        after == "null" -> "null (unset, or the literal string \"null\")"
+                        else -> after.take(2000)
+                    })
+                    append(when {
+                        after == value.trim() ->
+                            "confirmed: setting now equals the requested value"
+                        after == "null" ->
+                            "note: read-back is 'null' — the write did not take effect (unknown key/table, denied, or coerced)"
+                        else ->
+                            "note: read-back \"$after\" does not equal the requested \"$value\" — the write may have been coerced, rejected, or stored differently"
+                    })
+                }
+            }
+            else -> "unknown action '$action' — use get or put"
+        }
+    }
+
     private fun rootScreenshot(): List<JsonObject> {
         val png = Elevated.execBytes("screencap -p")
         if (png == null || png.isEmpty()) return listOf(textBlk("silent screencap failed or returned no data"))
-        val b64 = android.util.Base64.encodeToString(png, android.util.Base64.NO_WRAP)
-        return listOf(textBlk("silent screenshot (${png.size} bytes, via ${Elevated.source()})"), imageBlk(b64, "image/png"))
+        return listOf(textBlk("silent screenshot (${png.size} bytes, via ${Elevated.source()})")) +
+            mediaBlocks(png, "image/png", "screen.png", isImage = true)
     }
 
     private fun rootShell(args: JsonObject): String {

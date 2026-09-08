@@ -24,8 +24,11 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.*
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.ApplicationEngine
+import io.ktor.server.engine.applicationEngineEnvironment
 import io.ktor.server.engine.embeddedServer
+import io.ktor.server.engine.sslConnector
 import io.ktor.server.request.receiveText
+import io.ktor.server.response.respondBytes
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.options
@@ -91,13 +94,37 @@ class McpService : Service() {
         val host = Net.bindHost(cfg.bind)
         val port = cfg.port
         try {
-            engine = embeddedServer(CIO, host = host, port = port) {
-                installRoutes(applicationContext)
-            }.start(wait = false)
+            engine = if (cfg.tls) {
+                // Self-signed HTTPS. Cert is generated fresh each start (no keystore on disk);
+                // clients must trust it or skip verification. TLS uses the Netty engine because
+                // CIO does not support HTTPS at all (it throws asynchronously). Plain HTTP keeps
+                // the simple, proven CIO bootstrap below.
+                val alias = "androidmcp"
+                val pass = "androidmcp".toCharArray()
+                val ks = io.ktor.network.tls.certificates.buildKeyStore {
+                    certificate(alias) {
+                        password = "androidmcp"
+                        domains = listOf("localhost", "127.0.0.1", host)
+                    }
+                }
+                val env = applicationEngineEnvironment {
+                    sslConnector(ks, alias, { pass }, { pass }) {
+                        this.host = host
+                        this.port = port
+                    }
+                    module { installRoutes(applicationContext) }
+                }
+                embeddedServer(io.ktor.server.netty.Netty, env).start(wait = false)
+            } else {
+                embeddedServer(CIO, host = host, port = port) {
+                    installRoutes(applicationContext)
+                }.start(wait = false)
+            }
             running.value = true
+            val scheme = if (cfg.tls) "https" else "http"
             boundInfo.value = "${Net.reachableHost(cfg.bind)}:$port"
-            AuditLog.record("server", "local", true, "started on $host:$port")
-            notify("listening on ${boundInfo.value}")
+            AuditLog.record("server", "local", true, "started $scheme on $host:$port")
+            notify("listening on $scheme://${boundInfo.value}")
         } catch (t: Throwable) {
             running.value = false
             boundInfo.value = "error: ${t.message}"
@@ -195,6 +222,20 @@ private fun Application.installRoutes(appCtx: Context) {
         }
         get("/mcp") {
             call.respondText("server-to-client SSE stream not offered", status = HttpStatusCode.MethodNotAllowed)
+        }
+        // Transient media for resource_link replies. Auth is the unguessable ?k= nonce tied to
+        // this id (a capability URL) — no bearer token in the URL, single-use, TTL-expiring.
+        get("/media/{id}") {
+            val origin = call.request.headers["Origin"]
+            if (origin != null) {
+                if (!ConfigStore.current.allowBrowser) { call.respondText("forbidden origin", status = HttpStatusCode.Forbidden); return@get }
+                applyCors(call, origin)
+            }
+            val id = call.parameters["id"] ?: return@get call.respondText("not found", status = HttpStatusCode.NotFound)
+            val nonce = call.request.queryParameters["k"] ?: ""
+            val e = MediaStore.get(id, nonce)
+                ?: return@get call.respondText("not found or expired", status = HttpStatusCode.NotFound)
+            call.respondBytes(e.bytes, ContentType.parse(e.mime))
         }
     }
 }

@@ -171,7 +171,10 @@ const CAT_OF = {
   take_photo:"media", record_audio:"media", capture_screenshot:"media",
   read_clipboard:"clipboard", write_clipboard:"clipboard",
   run_shortcut:"system", list_packages:"system", launch_url:"system", dial:"system", torch:"system", vibrate:"system",
+  set_volume:"system", media_control:"system", toast:"system", share_text:"system", open_settings:"system",
+  create_calendar_event:"personal",
   root_screenshot:"elevated", root_shell:"elevated", elevated_input:"elevated",
+  elevated_current_app:"elevated", elevated_settings:"elevated",
 };
 const CAT_BLURB = {
   overview:"Identity and status of the device, plus the raw handshake. Start here.",
@@ -432,6 +435,12 @@ function renderResult(box, res, ms){
       box.appendChild(el("img",{src:"data:"+(blk.mimeType||"image/png")+";base64,"+blk.data, alt:"image reply"}));
     } else if (blk.type==="audio") {
       box.appendChild(el("audio",{controls:"", src:"data:"+(blk.mimeType||"audio/mp4")+";base64,"+blk.data}));
+    } else if (blk.type==="resource_link") {
+      // media-as-links mode: fetch the capability URL and render inline (img/audio) by mime.
+      const mime = blk.mimeType || "";
+      if (mime.startsWith("image/")) box.appendChild(el("img",{src: blk.uri, alt: blk.name||"image"}));
+      else if (mime.startsWith("audio/")) box.appendChild(el("audio",{controls:"", src: blk.uri}));
+      box.appendChild(el("div",{class:"meta"},[el("span",{text:(blk.name||"resource")+" · "+mime}), el("span",{class:"ms",html:'<a href="'+escapeHtml(blk.uri)+'" target="_blank" rel="noopener">open link</a>'})]));
     } else {
       box.appendChild(el("pre",{text: JSON.stringify(blk,null,2)}));
     }

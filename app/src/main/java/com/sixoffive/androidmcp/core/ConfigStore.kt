@@ -24,6 +24,8 @@ data class AppConfig(
     val bind: String = "loopback", // loopback | lan | tailscale
     val folders: Set<String> = emptySet(), // persisted SAF tree URIs
     val allowBrowser: Boolean = false, // when true, accept browser Origins + emit CORS (token still required)
+    val mediaAsLinks: Boolean = false, // return media as resource_link (fetchable URL) instead of inline base64
+    val tls: Boolean = false, // serve HTTPS with a self-signed cert instead of plain HTTP
 )
 
 /** Single observable source of truth for toggles + server settings. */
@@ -37,6 +39,8 @@ object ConfigStore {
     private val KEY_BIND = stringPreferencesKey("bind_mode")
     private val KEY_FOLDERS = stringSetPreferencesKey("folders")
     private val KEY_BROWSER = booleanPreferencesKey("allow_browser")
+    private val KEY_MEDIA_LINKS = booleanPreferencesKey("media_as_links")
+    private val KEY_TLS = booleanPreferencesKey("tls")
 
     val state = MutableStateFlow(AppConfig())
 
@@ -48,6 +52,8 @@ object ConfigStore {
             bind = p[KEY_BIND] ?: "loopback",
             folders = p[KEY_FOLDERS] ?: emptySet(),
             allowBrowser = p[KEY_BROWSER] ?: false,
+            mediaAsLinks = p[KEY_MEDIA_LINKS] ?: false,
+            tls = p[KEY_TLS] ?: false,
         )
     }
 
@@ -75,6 +81,8 @@ object ConfigStore {
     fun setBind(mode: String) = scope.launch { app.configDataStore.edit { it[KEY_BIND] = mode } }
     fun setPort(port: Int) = scope.launch { app.configDataStore.edit { it[KEY_PORT] = port } }
     fun setAllowBrowser(on: Boolean) = scope.launch { app.configDataStore.edit { it[KEY_BROWSER] = on } }
+    fun setMediaAsLinks(on: Boolean) = scope.launch { app.configDataStore.edit { it[KEY_MEDIA_LINKS] = on } }
+    fun setTls(on: Boolean) = scope.launch { app.configDataStore.edit { it[KEY_TLS] = on } }
 
     fun addFolder(uri: String) = scope.launch {
         app.configDataStore.edit { p -> p[KEY_FOLDERS] = (p[KEY_FOLDERS] ?: emptySet()) + uri }
