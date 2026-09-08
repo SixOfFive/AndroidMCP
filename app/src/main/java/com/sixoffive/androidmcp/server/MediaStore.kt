@@ -1,8 +1,9 @@
 package com.sixoffive.androidmcp.server
 
+import java.security.MessageDigest
 import java.security.SecureRandom
+import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Short-lived in-memory store for media returned as `resource_link` instead of inline base64.
@@ -18,40 +19,57 @@ object MediaStore {
     private const val MAX_ENTRIES = 24
 
     private val map = ConcurrentHashMap<String, Entry>()
-    private val counter = AtomicLong(0)
     private val rng = SecureRandom()
 
     /** Store bytes; returns (id, nonce) for building the fetch URL. */
     fun put(bytes: ByteArray, mime: String): Pair<String, String> {
         prune()
-        val id = "m" + counter.incrementAndGet().toString(36)
-        val nonce = randomToken()
+        // Ids used to be a sequential base36 counter ("m1", "m2", …). The /media route needs no
+        // bearer token, so a guessable id let anyone on the network enumerate pending blobs.
+        val id = randomToken(9)
+        val nonce = randomToken(18)
         map[id] = Entry(bytes, mime, nonce, System.currentTimeMillis() + TTL_MS)
         return id to nonce
     }
 
-    /** Fetch bytes for id iff the nonce matches and it hasn't expired (single-use safe). */
-    fun get(id: String, nonce: String): Entry? {
+    /**
+     * Fetch bytes for [id] iff [nonce] matches and it hasn't expired, consuming the entry.
+     *
+     * Genuinely single-use: the old `get` returned the entry *without* removing it, so a link was
+     * replayable for the full TTL despite four places documenting it as one-time. Conversely a
+     * *wrong* nonce used to evict the entry, which — with guessable ids and no token on this route
+     * — let anyone delete every pending blob.
+     */
+    fun take(id: String, nonce: String): Entry? {
+        prune()
         val e = map[id] ?: return null
-        if (e.expiresAt < System.currentTimeMillis() || e.nonce != nonce) {
-            map.remove(id); return null
-        }
-        return e
+        if (e.expiresAt < System.currentTimeMillis()) { map.remove(id); return null }
+        if (!constantTimeEquals(e.nonce, nonce)) return null // a bad guess must not evict
+        return if (map.remove(id, e)) e else null            // consume; lose the race → not found
     }
+
+    /** Test/diagnostic: how many blobs are currently held. */
+    fun size(): Int { prune(); return map.size }
 
     private fun prune() {
         val now = System.currentTimeMillis()
         map.entries.removeIf { it.value.expiresAt < now }
         if (map.size >= MAX_ENTRIES) {
-            // evict the oldest (smallest id counter) until under the cap
-            map.keys.sortedBy { it.drop(1).toLongOrNull(36) ?: Long.MAX_VALUE }
+            // Ids are random now, so evict by actual age rather than by id ordering.
+            map.entries.sortedBy { it.value.expiresAt }
                 .take((map.size - MAX_ENTRIES) + 1)
-                .forEach { map.remove(it) }
+                .forEach { map.remove(it.key) }
         }
     }
 
-    private fun randomToken(): String {
-        val b = ByteArray(18); rng.nextBytes(b)
-        return android.util.Base64.encodeToString(b, android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING)
+    /** Compare without leaking the matching prefix length through timing. */
+    private fun constantTimeEquals(a: String, b: String): Boolean =
+        MessageDigest.isEqual(a.toByteArray(Charsets.UTF_8), b.toByteArray(Charsets.UTF_8))
+
+    // java.util.Base64 (API 26+, and minSdk is 26) rather than android.util.Base64: identical
+    // RFC 4648 URL-safe output, but available on a plain JVM so this class is unit-testable.
+    private fun randomToken(bytes: Int): String {
+        val b = ByteArray(bytes); rng.nextBytes(b)
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(b)
     }
 }

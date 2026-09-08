@@ -1,7 +1,9 @@
 package com.sixoffive.androidmcp.server
 
+import android.content.ContentResolver
 import android.content.Context
 import android.net.Uri
+
 import androidx.documentfile.provider.DocumentFile
 import com.sixoffive.androidmcp.core.ConfigStore
 
@@ -40,8 +42,74 @@ object FilesAccess {
         return n
     }
 
+    /**
+     * Is [uriStr] a SAF document inside one of the trees the user actually granted?
+     *
+     * Without this check `read` handed the client's string straight to `ContentResolver`, which
+     * resolves `file://` to a plain `FileInputStream` — so `file:///proc/self/status` (and any
+     * other path the app's own uid can open) was readable, despite this class claiming to be
+     * "limited to the SAF folder trees the user has granted". The gate only ever checked that
+     * *some* folder had been granted, never that the requested URI was inside one.
+     *
+     * Containment is by document-id prefix: SAF tree children carry the tree's document id as a
+     * prefix (e.g. tree `primary:Docs` → child `primary:Docs/notes.txt`), which is how
+     * `DocumentsContract` builds them.
+     */
+    internal fun containedIn(uriStr: String, trees: Set<String>): Boolean {
+        val target = SafUri.parse(uriStr) ?: return false
+        // The id a request addresses: its document id, or — for a bare tree URI — the tree root.
+        val docId = target.documentId ?: target.treeId ?: return false
+        return trees.any { t ->
+            val tree = SafUri.parse(t) ?: return@any false
+            if (!target.authority.equals(tree.authority, ignoreCase = true)) return@any false
+            val treeId = tree.treeId ?: return@any false
+            // Exact root, or a descendant. The separator is required so that a grant of
+            // "primary:Docs" does not also authorise "primary:Docs2".
+            docId == treeId || docId.startsWith(treeId.trimEnd('/') + "/")
+        }
+    }
+
+    /**
+     * The pieces of a Storage Access Framework URI, parsed as plain strings.
+     *
+     * Deliberately not `DocumentsContract` — its `isDocumentUri` needs a live `Context` to ask the
+     * PackageManager whether the authority is a documents provider, which would make the
+     * containment check untestable off-device and would fail open if the query threw. Shape:
+     * `content://<authority>/tree/<treeId>/document/<docId>`, each id percent-encoded.
+     */
+    internal data class SafUri(val authority: String, val treeId: String?, val documentId: String?) {
+        companion object {
+            fun parse(s: String): SafUri? {
+                // Only content:// — never file://, which ContentResolver happily resolves to a
+                // plain FileInputStream anywhere the app's uid can read.
+                val rest = s.removePrefix("content://")
+                if (rest.length == s.length) return null // prefix absent → not a content URI
+                if (!s.regionMatches(0, ContentResolver.SCHEME_CONTENT, 0, 7, ignoreCase = true)) return null
+                val slash = rest.indexOf('/')
+                val authority = if (slash < 0) rest else rest.substring(0, slash)
+                if (authority.isEmpty()) return null
+                val segments = if (slash < 0) emptyList() else
+                    rest.substring(slash + 1).substringBefore('?').substringBefore('#')
+                        .split('/').filter { it.isNotEmpty() }.map(::decode)
+                // Reject traversal in the decoded ids rather than trying to normalise them.
+                if (segments.any { it == ".." || it.contains("/../") }) return null
+                fun after(k: String): String? =
+                    segments.indexOf(k).takeIf { it >= 0 && it + 1 < segments.size }?.let { segments[it + 1] }
+                return SafUri(authority, after("tree"), after("document"))
+            }
+
+            private fun decode(s: String): String =
+                runCatching { java.net.URLDecoder.decode(s, "UTF-8") }.getOrDefault(s)
+        }
+    }
+
     fun read(ctx: Context, uriStr: String, maxBytes: Int = 100_000): String {
         val uri = runCatching { Uri.parse(uriStr) }.getOrNull() ?: return "invalid uri"
+        if (!containedIn(uriStr, ConfigStore.current.folders)) {
+            return "refused: $uriStr is not inside a granted folder. Only content:// URIs printed " +
+                "by list_files (no argument) can be read — add the folder in androidmcp " +
+                "(Shared folders → Add folder) first."
+        }
         val stream = runCatching { ctx.contentResolver.openInputStream(uri) }.getOrNull()
             ?: return "cannot open $uriStr (is it inside a granted folder?)"
         return stream.use { s ->

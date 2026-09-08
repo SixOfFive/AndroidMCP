@@ -37,6 +37,15 @@ android {
     buildFeatures {
         compose = true
     }
+    testOptions {
+        unitTests {
+            // Deliberately NOT `isReturnDefaultValues = true`. Stubbing android.jar to return
+            // zeros would silently hand tests a null token from TokenStore.generate and a null
+            // nonce from MediaStore.put — the tests would pass while asserting nothing. Anything
+            // that genuinely needs a device stays out of this source set.
+            isReturnDefaultValues = false
+        }
+    }
     packaging {
         resources {
             // Ktor / kotlinx pull in duplicate metadata files; drop them.
@@ -73,4 +82,10 @@ dependencies {
     implementation(libs.ktor.tls.certs)
     implementation(libs.ktor.server.netty)
     implementation(libs.kotlinx.serialization.json)
+
+    testImplementation(libs.junit)
+    testImplementation(libs.kotlin.test.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.ktor.server.test.host)
+    testImplementation(libs.mockito.core)
 }

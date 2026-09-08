@@ -15,11 +15,12 @@ you enable only the features you want a client to have, and each one states exac
 it exposes and the risk, right where you toggle it. The only things you must set up to
 connect at all are the server switch and a client token.
 
-> **Status: feature-complete and device-verified.** All 16 capabilities, the double
-> gate, per-call approval, token auth, the config UI, and the installer are built and
-> tested on real hardware (a Samsung Galaxy A03s and a Unisoc tablet), including live
-> cross-machine connections over **LAN** and **Tailscale**. Not yet production-hardened
-> — see [Caveats](#caveats).
+> **Status: feature-complete and device-verified; transport pinned to the MCP spec.** All
+> capabilities, the double gate, per-call approval, token auth, the config UI, and the
+> installer are built and tested on real hardware (a Samsung Galaxy A03s and a Unisoc tablet),
+> including live cross-machine connections over **LAN** and **Tailscale**. The JSON-RPC and
+> HTTP layers are covered by **70 JVM unit tests**. **No real MCP client has connected yet** —
+> see [Caveats](#caveats).
 
 ---
 
@@ -239,6 +240,19 @@ device; `-s <serial>` for one, `-r` for a release build, `-b` to build only):
 ./scripts/build-and-install.sh
 ```
 
+### Tests
+
+The protocol, the HTTP layer, SAF containment, the TLS cert and the tool schemas all run on a
+plain JVM — no device or emulator needed:
+
+```bash
+./gradlew :app:testDebugUnitTest
+```
+
+Anything that needs real hardware (camera, mic, screen capture, the ContentProvider-backed
+readers, Shizuku/root) is deliberately **not** in that suite and stays on manual on-device
+verification.
+
 ---
 
 ## Connecting a client
@@ -281,12 +295,16 @@ tailnet-connected machine rather than exposing it publicly.
 
 - **Default-deny**, gate re-checked at call time; config lives only in the local UI —
   no MCP tool can enable a capability, mint a token, or widen the bind interface.
+- **`list_files` is confined to the folders you shared.** A read is accepted only for a
+  `content://` document whose id sits under a granted SAF tree; `file://` and every other
+  scheme are refused outright.
 - Bind to **loopback** or the **Tailscale** interface; `lan` binds `0.0.0.0` and is the
   warned option. On Tailscale the hop is already WireGuard-encrypted; the bearer token is
   defence-in-depth + client attribution. **Optional HTTPS** (self-signed, via the Netty
   engine) can be toggled on — mostly useful for a bare-LAN bind, since Tailscale already
-  encrypts. The self-signed cert is **persistent**, so pin the stable SHA-256 the app shows
-  (or skip verification).
+  encrypts. The cert is **persistent, RSA-2048/SHA-256, valid 10 years**, and carries an IP
+  SAN for every address the device is reachable on (loopback, LAN, tailnet), so pin the
+  stable SHA-256 the app shows (or skip verification).
 - Tokens are stored **hashed** (SHA-256, never plaintext); `allowBackup=false`;
   CSPRNG-generated. Every tool call is written to an in-app **audit log**.
 
@@ -294,16 +312,105 @@ tailnet-connected machine rather than exposing it publicly.
 
 ## Caveats
 
-The roadmap items are all done (see Roadmap). Remaining rough edges: TLS pulls in the Netty
-engine (larger APK) and its cert is self-signed — but now **persistent**, so a client can pin
-the stable SHA-256 the app shows (rather than skipping verification); media-as-links keeps
-bytes only in memory with a 10-minute TTL. Before a first real client, pin the transport to
-the live MCP spec at `modelcontextprotocol.io` — the server was verified with `curl`
-(spec-compatible).
+The v1 roadmap is done and the transport has since been pinned to the MCP spec and covered
+by **70 JVM unit tests** (`./gradlew :app:testDebugUnitTest`). Remaining rough edges:
+
+- **No real MCP client has connected yet.** The protocol is now tested against the spec rather
+  than by hand with `curl`, but "passes our tests" is not "works with Claude Code".
+- **TLS pulls in the Netty engine** (larger APK), because CIO cannot serve HTTPS at all. The
+  cert is self-signed, so a client must pin the SHA-256 the app shows or skip verification;
+  Node-based clients have no pinning knob and need the cert as a trusted CA instead.
+- **The server implements protocol revision `2025-06-18` only.** An unsupported
+  `MCP-Protocol-Version` header is answered with a 400 naming what is supported.
+- **`resource_link` media is fetched over plain HTTP**, not `resources/read` — the server
+  declares no `resources` capability, so a client that only dereferences resource links through
+  the protocol cannot resolve them. Media bytes live in memory with a 10-minute TTL and are
+  consumed on first fetch.
+- **No SSE stream** (`GET /mcp` returns 405, which the spec permits), so there is no channel for
+  `tools/list_changed` — tool descriptions are deliberately static and live state comes from
+  `list_capabilities`.
 
 ---
 
 ## Roadmap
+
+### v2 — spec conformance, schema quality, and a test harness
+
+Written after auditing the transport against the live MCP spec and the code against itself.
+The v1 list below was fully checked off; this is its successor.
+
+**Done:**
+
+- [x] **JSON-RPC conformance.** Notifications are never answered (any method, not just two
+      hardcoded names — `notifications/roots/list_changed` used to get back a `-32601` carrying
+      `"id": null`). Malformed envelopes answer **400** instead of a 200-with-error, and omit
+      `id` rather than sending `null`. Unknown tools are a `-32602` protocol error, not a tool
+      result. Type-confused `method`/`name`/`arguments` return JSON-RPC errors instead of a 500.
+- [x] **Real version negotiation.** `initialize` echoes the client's requested revision when
+      supported instead of hardcoding its own, and an unsupported `MCP-Protocol-Version` header
+      is a 400 naming `data.supported`.
+- [x] **Honest failures.** A tool that throws now returns `isError: true` and is audited as
+      `EXECUTION_ERROR` — it used to be reported to the client as a success and written to the
+      audit log as `"ok"`. `AuditLog.record` is atomic, so concurrent calls stop dropping entries.
+- [x] **Auth hardening.** The `Bearer` scheme is matched case-insensitively, and a bare
+      schemeless token no longer authenticates (`removePrefix` returned the string unchanged when
+      the prefix was absent). 401s carry `WWW-Authenticate`. Request bodies are capped at 512 KB.
+- [x] **`serverInfo.title` + `instructions`**, so a client is told the default-deny contract and
+      the `structuredContent` refusal shape up front rather than discovering it by trial.
+- [x] **`list_files` is actually confined to granted folders.** `read` passed the client's string
+      straight to `ContentResolver`, which resolves `file://` to a plain `FileInputStream` — so
+      `file:///proc/self/status` was readable. Containment is now checked by SAF document-id
+      ancestry, and non-`content://` schemes are refused.
+- [x] **Media capability URLs are genuinely single-use.** The link was replayable for the full
+      10-minute TTL, while a *wrong* nonce evicted the entry — and ids were a sequential base36
+      counter on a route that needs no bearer token, so pending blobs could be enumerated and
+      deleted. Ids are now random, the entry is consumed on success, and a bad nonce evicts
+      nothing. Responses carry `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`.
+- [x] **Captures are no longer written to disk.** Every `take_photo` / `record_audio` /
+      `capture_screenshot` also wrote `filesDir/{photos,audio,screens}/last.*`, which nothing
+      read — so the last camera frame and mic clip outlived turning the capability off and
+      revoking the OS permission. The writes are gone and existing installs are purged on launch.
+- [x] **Elevated commands can no longer wedge a worker.** `root_shell` read only stdout, so a
+      command that filled the stderr pipe deadlocked; `waitFor()` was unbounded, so `logcat`
+      never returned; and `readBytes()` was uncapped. Output is now capped at 1 MB, stderr is
+      merged, and the command is killed after 20 s.
+- [x] **The TLS cert is usable by a verifying client.** ktor's `CertificateBuilder` defaults were
+      being taken wholesale: the cert measured on-device was **SHA-1, RSA-1024, valid three days**,
+      with no SAN for the LAN or tailnet address. Now RSA-2048 / SHA-256 / 10 years, with an IP
+      SAN per bind address, regenerated when it expires or the device's address changes.
+- [x] **Tool schemas a model can actually use.** 47 properties across 25 tools were bare
+      `{"type":"string"}` with no `required`, no descriptions and no bounds. Now a single
+      `ToolSchemas` table carries usage text, per-argument descriptions with units and ranges,
+      `required`, enums, `minimum`/`maximum`/`default` mirroring the handler clamps, and MCP
+      `annotations` (`readOnlyHint` / `destructiveHint` / `openWorldHint`). Descriptions no longer
+      embed `[currently enabled/disabled]`, which went stale the moment a toggle changed because
+      clients cache `tools/list` and there is no `listChanged` channel.
+- [x] **Behavioural fixes surfaced by writing those schemas:** `torch` with no arguments turned
+      the light **off**; `read_sms`/`read_call_log`/`read_notifications` were unclamped, so
+      `limit:-1` made a full inbox report "no messages" and made `read_notifications` throw;
+      `set_volume` rejected the `voice_call` stream that `volume_info` advertises; `take_photo`
+      echoed a camera it had not used; `post_notification` silently posted `"(no text)"`.
+- [x] **70 JVM unit tests** — the first in the project. Protocol conformance, the HTTP layer
+      (auth, DNS-rebinding guard, CORS, version header, body cap, media nonce), SAF containment,
+      TLS cert properties, registry invariants, and schema quality gates. `installRoutes` takes
+      the handler as a lambda so the whole HTTP layer runs under `testApplication` with no device.
+
+**Open:**
+
+- [ ] **Connect a real MCP client** (Claude Code `--transport http`, the MCP Inspector) — the
+      point of everything above, and still unverified.
+- [ ] **`resources/list` + `resources/read`** so `resource_link` media is dereferenceable through
+      the protocol rather than only over plain HTTP.
+- [ ] **Origin allowlist** instead of reflecting any browser Origin when the dashboard is opted in.
+- [ ] **Log and rate-limit rejected connections** — neither a 401 nor an Origin 403 currently
+      writes an audit entry, so probing a `lan` bind leaves no trace in the log the UI presents
+      as the trust record.
+- [ ] **Approval timeout races the client's.** `TIMEOUT_MS` is 60 s, exactly the reference SDK's
+      request timeout, and the client's clock starts first — so "phone in a pocket" surfaces as an
+      opaque transport timeout instead of the structured refusal.
+- [ ] **Media links are built from live config, not the config the listener actually bound.**
+
+### v1 — feature completeness *(done)*
 
 - [x] Scaffold + green build; core (gate, config, hashed tokens, audit)
 - [x] Ktor foreground-service server, MCP JSON-RPC over Streamable HTTP, bearer auth

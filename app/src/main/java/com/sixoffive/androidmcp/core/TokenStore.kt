@@ -1,7 +1,6 @@
 package com.sixoffive.androidmcp.core
 
 import android.content.Context
-import android.util.Base64
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -13,6 +12,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.util.Base64
 
 private val Context.tokenDataStore by preferencesDataStore(name = "androidmcp_tokens")
 
@@ -50,7 +50,10 @@ object TokenStore {
     /** Generate a new token, store its hash, return the raw value (shown once). */
     fun generate(name: String): String {
         val bytes = ByteArray(24).also { SecureRandom().nextBytes(it) }
-        val raw = Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+        // java.util.Base64 (API 26+; minSdk is 26) — same RFC 4648 URL-safe alphabet and no
+        // wrapping, so token values are byte-identical, but it works on a plain JVM so token
+        // minting and verification are unit-testable without Robolectric.
+        val raw = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
         val hash = sha256Hex(raw)
         scope.launch {
             app.tokenDataStore.edit { p ->

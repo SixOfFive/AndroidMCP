@@ -30,143 +30,170 @@ import kotlinx.serialization.json.*
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
-/** Hand-rolled MCP JSON-RPC handler over Streamable HTTP. Returns a JSON string, or null for notifications. */
+/** Hand-rolled MCP JSON-RPC handler over Streamable HTTP. */
 object Mcp {
-    private const val PROTOCOL = "2025-06-18"
+    /** The one protocol revision this server implements. `initialize` negotiates against this set. */
+    const val PROTOCOL = "2025-06-18"
+    val SUPPORTED = setOf(PROTOCOL)
+
+    /** A client that sends no `MCP-Protocol-Version` header is assumed to predate it (spec back-compat). */
+    const val ASSUMED_WHEN_HEADER_ABSENT = "2025-03-26"
+
     private val json = Json { ignoreUnknownKeys = true }
 
-    suspend fun handle(ctx: Context, body: String, client: String): String? {
+    /**
+     * Outcome of one JSON-RPC message.
+     *
+     * [Rejected] exists because a malformed *envelope* is an HTTP-layer failure, not a JSON-RPC
+     * result: the spec wants 4xx for a body that never parsed into a request, and a JSON-RPC error
+     * for one that did. [None] is a notification — it MUST NOT be answered (JSON-RPC 2.0 §4.1).
+     */
+    sealed interface Reply {
+        data class Body(val json: String) : Reply
+        data class Rejected(val status: Int, val json: String) : Reply
+        data object None : Reply
+    }
+
+    suspend fun handle(ctx: Context, body: String, client: String): Reply {
         val root = runCatching { json.parseToJsonElement(body) }.getOrNull()
-            ?: return error(JsonNull, -32700, "Parse error")
-        if (root !is JsonObject) return error(JsonNull, -32600, "Invalid Request")
-        val id = root["id"] ?: JsonNull
-        return when (val method = root["method"]?.jsonPrimitive?.contentOrNull) {
-            "initialize" -> result(id, buildJsonObject {
-                put("protocolVersion", PROTOCOL)
-                putJsonObject("capabilities") { putJsonObject("tools") {} }
-                putJsonObject("serverInfo") { put("name", "androidmcp"); put("version", "0.1.0") }
-            })
-            "notifications/initialized", "notifications/cancelled" -> null
-            "ping" -> result(id, buildJsonObject {})
-            "tools/list" -> result(id, buildJsonObject {
-                putJsonArray("tools") { Capabilities.REGISTRY.forEach { add(toolDef(ctx, it)) } }
-            })
-            "tools/call" -> toolsCall(ctx, id, root, client)
-            else -> error(id, -32601, "Method not found: $method")
+            ?: return Reply.Rejected(400, errorNoId(-32700, "Parse error"))
+        // 2025-06-18 removed JSON-RPC batching, so a top-level array is not a valid request here.
+        if (root !is JsonObject) return Reply.Rejected(400, errorNoId(-32600, "Invalid Request: expected a JSON object"))
+
+        // `method` must be a string; a client sending an object/array here would otherwise blow up
+        // `.jsonPrimitive` and surface as an HTTP 500 instead of a JSON-RPC error.
+        val method = (root["method"] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
+
+        // A message with no `id` is a notification: never answer it, whatever the method is. The
+        // old code only special-cased two names, so `notifications/roots/list_changed` — which every
+        // roots-capable client sends right after `initialize` — got back a -32601 with `"id": null`.
+        if (!root.containsKey("id")) return Reply.None
+
+        val id = root["id"]!!
+        if (id !is JsonPrimitive || (!id.isString && id.longOrNull == null && id.doubleOrNull == null)) {
+            return Reply.Rejected(400, errorNoId(-32600, "Invalid Request: id must be a string or a number"))
+        }
+        if (method == null) return Reply.Body(error(id, -32600, "Invalid Request: missing method"))
+
+        return runCatching {
+            when (method) {
+                "initialize" -> Reply.Body(result(id, initialize(root)))
+                "ping" -> Reply.Body(result(id, buildJsonObject {}))
+                "tools/list" -> Reply.Body(result(id, buildJsonObject {
+                    putJsonArray("tools") { Capabilities.REGISTRY.forEach { add(toolDef(ctx, it)) } }
+                }))
+                "tools/call" -> Reply.Body(toolsCall(ctx, id, root, client))
+                else -> Reply.Body(error(id, -32601, "Method not found: $method"))
+            }
+        }.getOrElse { t ->
+            // Nothing below should throw, but an escapee must not become a bare HTTP 500 —
+            // that gives the client no id to correlate and no reason.
+            Reply.Body(error(id, -32603, "Internal error: ${t::class.java.simpleName}: ${t.message}"))
         }
     }
 
+    /**
+     * Version negotiation. The spec requires the server to echo the client's requested version when
+     * it supports it, and to answer with a version it *does* support otherwise — the old code
+     * hardcoded its own version either way, which silently mismatches an older client.
+     */
+    private fun initialize(root: JsonObject): JsonObject {
+        val params = root["params"] as? JsonObject
+        val asked = ((params?.get("protocolVersion")) as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
+        val agreed = if (asked != null && asked in SUPPORTED) asked else PROTOCOL
+        return buildJsonObject {
+            put("protocolVersion", agreed)
+            // Only `tools` is declared: there is no SSE stream to push `listChanged` on, and no
+            // resources/prompts/logging implementation. Claiming more would be a false promise.
+            putJsonObject("capabilities") { putJsonObject("tools") {} }
+            putJsonObject("serverInfo") {
+                put("name", "androidmcp")
+                put("title", "Android MCP")
+                put("version", "0.1.0")
+            }
+            put("instructions", INSTRUCTIONS)
+        }
+    }
+
+    private val INSTRUCTIONS = """
+        This server exposes an Android device's own capabilities as tools. Everything is DEFAULT-DENY:
+        each tool must be enabled by the device's owner in the app, and high-impact tools additionally
+        raise an Allow/Deny prompt on the device for every call.
+
+        Every tool is always listed, even when it is off, so you can discover it and explain the fix.
+        A blocked call is not a protocol error — it returns isError:true plus a structuredContent
+        object naming the exact gate that failed (reason_code, app_toggle, os_permission, remediation,
+        retriable). Read remediation and tell the user what to turn on; retry only when retriable is true.
+
+        Call list_capabilities first to see what is currently enabled — tool descriptions are static
+        and do not reflect live on/off state.
+    """.trimIndent()
+
     private fun toolDef(ctx: Context, cap: CapabilityMeta): JsonObject = buildJsonObject {
+        val spec = ToolSchemas.specFor(cap.id)
         put("name", cap.id)
-        val status = if (ConfigStore.isEnabled(cap.id)) "enabled" else "disabled"
+        put("title", cap.title)
         val hw = com.sixoffive.androidmcp.core.HardwareCheck.missing(ctx, cap.id)
-        put("description", "${cap.title}. Why: ${cap.why.joinToString("; ")}. " +
-            "Exposes: ${cap.dataExposed}. [currently $status]" +
-            (if (hw != null) " [unavailable on this device: $hw]" else ""))
+        // Lead with what the tool DOES. The description used to be pure privacy boilerplate
+        // ("Why: …. Exposes: ….") that never named an argument — and it carried a
+        // "[currently enabled/disabled]" suffix computed at list time. Clients cache tools/list at
+        // connect and there is no listChanged channel to correct it, so that suffix went stale the
+        // moment the owner flipped a toggle. Live state comes from `list_capabilities` and from the
+        // structuredContent refusal on the call itself; `why`/`dataExposed` are re-sent there too.
+        put("description", buildString {
+            append(spec.usage.ifEmpty { cap.title })
+            append(" Exposes: ${cap.dataExposed}.")
+            if (cap.highImpact) append(" Requires the device owner to approve each call on the device.")
+            if (hw != null) append(" [unavailable on this device: $hw]")
+        })
         put("inputSchema", buildJsonObject {
             put("type", "object")
             putJsonObject("properties") {
-                if (cap.id == "post_notification") {
-                    putJsonObject("title") { put("type", "string") }
-                    putJsonObject("text") { put("type", "string") }
-                }
-                if (cap.id == "take_photo") {
-                    putJsonObject("camera") { put("type", "string"); putJsonArray("enum") { add("back"); add("front") } }
-                }
-                if (cap.id == "write_clipboard") {
-                    putJsonObject("text") { put("type", "string") }
-                }
-                if (cap.id == "read_sms" || cap.id == "read_call_log" || cap.id == "read_notifications") {
-                    putJsonObject("limit") { put("type", "integer") }
-                }
-                if (cap.id == "list_files") {
-                    putJsonObject("uri") { put("type", "string") }
-                }
-                if (cap.id == "run_shortcut") {
-                    putJsonObject("package") { put("type", "string") }
-                }
-                if (cap.id == "root_shell") {
-                    putJsonObject("command") { put("type", "string") }
-                }
-                if (cap.id == "record_audio") {
-                    putJsonObject("seconds") { put("type", "integer") }
-                }
-                if (cap.id == "torch") {
-                    putJsonObject("on") { put("type", "boolean") }
-                }
-                if (cap.id == "vibrate") {
-                    putJsonObject("milliseconds") { put("type", "integer") }
-                }
-                if (cap.id == "list_packages") {
-                    putJsonObject("filter") { put("type", "string") }
-                    putJsonObject("include_system") { put("type", "boolean") }
-                    putJsonObject("limit") { put("type", "integer") }
-                }
-                if (cap.id == "launch_url") {
-                    putJsonObject("url") { put("type", "string") }
-                }
-                if (cap.id == "dial") {
-                    putJsonObject("number") { put("type", "string") }
-                }
-                if (cap.id == "get_contacts") {
-                    putJsonObject("query") { put("type", "string") }
-                    putJsonObject("limit") { put("type", "integer") }
-                }
-                if (cap.id == "read_calendar") {
-                    putJsonObject("days_ahead") { put("type", "integer") }
-                    putJsonObject("limit") { put("type", "integer") }
-                }
-                if (cap.id == "elevated_input") {
-                    putJsonObject("action") { put("type", "string"); putJsonArray("enum") { add("tap"); add("swipe"); add("text"); add("key"); } }
-                    putJsonObject("x") { put("type", "integer") }
-                    putJsonObject("y") { put("type", "integer") }
-                    putJsonObject("x2") { put("type", "integer") }
-                    putJsonObject("y2") { put("type", "integer") }
-                    putJsonObject("text") { put("type", "string") }
-                    putJsonObject("keycode") { put("type", "string") }
-                }
-                if (cap.id == "set_volume") {
-                    putJsonObject("stream") { put("type", "string"); putJsonArray("enum") { add("music"); add("ring"); add("alarm"); add("notification"); add("system"); } }
-                    putJsonObject("level") { put("type", "integer") }
-                    putJsonObject("show_ui") { put("type", "boolean") }
-                }
-                if (cap.id == "media_control") {
-                    putJsonObject("action") { put("type", "string"); putJsonArray("enum") { add("play"); add("pause"); add("playpause"); add("next"); add("previous"); add("stop"); } }
-                }
-                if (cap.id == "toast") {
-                    putJsonObject("text") { put("type", "string") }
-                    putJsonObject("long") { put("type", "boolean") }
-                }
-                if (cap.id == "share_text") {
-                    putJsonObject("text") { put("type", "string") }
-                    putJsonObject("subject") { put("type", "string") }
-                }
-                if (cap.id == "open_settings") {
-                    putJsonObject("screen") { put("type", "string"); putJsonArray("enum") { add("wifi"); add("bluetooth"); add("location"); add("display"); add("sound"); add("apps"); add("app_details"); add("battery"); add("date"); add("security"); add("home"); } }
-                }
-                if (cap.id == "create_calendar_event") {
-                    putJsonObject("title") { put("type", "string") }
-                    putJsonObject("start_epoch_ms") { put("type", "integer") }
-                    putJsonObject("duration_minutes") { put("type", "integer") }
-                    putJsonObject("location") { put("type", "string") }
-                    putJsonObject("calendar_id") { put("type", "integer") }
-                }
-                if (cap.id == "elevated_settings") {
-                    putJsonObject("action") { put("type", "string"); putJsonArray("enum") { add("get"); add("put"); } }
-                    putJsonObject("namespace") { put("type", "string"); putJsonArray("enum") { add("system"); add("secure"); add("global"); } }
-                    putJsonObject("key") { put("type", "string") }
-                    putJsonObject("value") { put("type", "string") }
+                spec.args.forEach { a ->
+                    putJsonObject(a.name) {
+                        put("type", a.type)
+                        put("description", a.description)
+                        a.enum?.let { e -> putJsonArray("enum") { e.forEach { add(it) } } }
+                        a.min?.let { put("minimum", it) }
+                        a.max?.let { put("maximum", it) }
+                        a.default?.let { put("default", it) }
+                    }
                 }
             }
+            val required = spec.args.filter { it.required }.map { it.name }
+            if (required.isNotEmpty()) putJsonArray("required") { required.forEach { add(it) } }
+            // No undeclared arguments: the handlers ignore extras, and saying so stops a model
+            // inventing parameters that silently do nothing.
+            put("additionalProperties", false)
         })
+        // Display hints for the host only. The device-side gate, OS permission check and per-call
+        // approval run regardless of what a client concludes from these.
+        putJsonObject("annotations") {
+            put("title", cap.title)
+            put("readOnlyHint", spec.readOnly)
+            if (!spec.readOnly) put("destructiveHint", spec.destructive)
+            put("openWorldHint", spec.openWorld)
+        }
     }
 
     private suspend fun toolsCall(ctx: Context, id: JsonElement, root: JsonObject, client: String): String {
         val params = root["params"] as? JsonObject
-        val name = params?.get("name")?.jsonPrimitive?.contentOrNull
-        val args = params?.get("arguments") as? JsonObject ?: JsonObject(emptyMap())
-        val cap = name?.let { Capabilities.byId(it) }
-            ?: return result(id, errorResult("Unknown tool: $name"))
+            ?: return error(id, -32602, "Invalid params: 'params' must be an object")
+        val name = (params["name"] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
+            ?: return error(id, -32602, "Invalid params: 'name' must be a string naming a tool")
+        // A non-object `arguments` used to be silently swapped for {} — every argument vanished and
+        // the tool ran on its defaults, which for a high-impact tool means burning a user approval
+        // on the wrong action.
+        if (params.containsKey("arguments") && params["arguments"] !is JsonObject) {
+            return error(id, -32602, "Invalid params: 'arguments' must be an object")
+        }
+        val args = params["arguments"] as? JsonObject ?: JsonObject(emptyMap())
+        // An unknown tool is a protocol error (-32602), not a tool result: the tool never ran, so
+        // there is no execution outcome to report. This branch also used to write no audit entry.
+        val cap = Capabilities.byId(name) ?: run {
+            AuditLog.record(name, client, false, "UNKNOWN_TOOL")
+            return error(id, -32602, "Unknown tool: $name")
+        }
 
         return when (val gate = GateEngine.evaluate(ctx, cap)) {
             is GateResult.Denied -> {
@@ -178,10 +205,19 @@ object Mcp {
                     AuditLog.record(cap.id, client, false, "REQUIRES_USER_APPROVAL")
                     return result(id, approvalRefusal(cap))
                 }
-                val content = runCatching { withContext(Dispatchers.IO) { execute(ctx, cap, args) } }
-                    .getOrElse { listOf(textBlk("error: ${it.message}")) }
-                AuditLog.record(cap.id, client, true, "ok")
-                result(id, successResult(content))
+                // A thrown tool used to be reported to the client as isError:false and to the audit
+                // log as "ok" — a camera crash looked like a successful capture in the trust record.
+                runCatching { withContext(Dispatchers.IO) { execute(ctx, cap, args) } }.fold(
+                    onSuccess = { content ->
+                        AuditLog.record(cap.id, client, true, "ok")
+                        result(id, successResult(content))
+                    },
+                    onFailure = { t ->
+                        val why = "${t::class.java.simpleName}: ${t.message}"
+                        AuditLog.record(cap.id, client, false, "EXECUTION_ERROR: $why")
+                        result(id, errorResult("${cap.title} failed: $why"))
+                    },
+                )
             }
         }
     }
@@ -196,6 +232,24 @@ object Mcp {
         put("jsonrpc", "2.0"); put("id", id)
         putJsonObject("error") { put("code", code); put("message", message) }
     }.toString()
+
+    /**
+     * An error for a message whose id could not be recovered. JSON-RPC's `RequestId` is
+     * `string | number`, so `"id": null` is off-schema — omit the key entirely instead.
+     */
+    private fun errorNoId(code: Int, message: String, data: JsonObject? = null): String = buildJsonObject {
+        put("jsonrpc", "2.0")
+        putJsonObject("error") {
+            put("code", code); put("message", message)
+            if (data != null) put("data", data)
+        }
+    }.toString()
+
+    /** Rejection for an unsupported `MCP-Protocol-Version` header, built here so the list stays in one place. */
+    fun unsupportedProtocolVersion(asked: String): String = errorNoId(
+        -32600, "Unsupported MCP-Protocol-Version: $asked",
+        buildJsonObject { putJsonArray("supported") { SUPPORTED.forEach { add(it) } } },
+    )
 
     private fun textBlk(s: String): JsonObject = buildJsonObject { put("type", "text"); put("text", s) }
     private fun imageBlk(b64: String, mime: String): JsonObject = buildJsonObject {
@@ -224,7 +278,9 @@ object Mcp {
                 listOf(textBlk("(${bytes.size / 1_000_000}+ MB — returned as a link instead of inline base64)"), link)
             else listOf(link)
         } else {
-            val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+            // java.util.Base64: same standard alphabet, padded, unwrapped — byte-identical to
+            // android.util.Base64 with NO_WRAP, but usable from a plain-JVM unit test.
+            val b64 = java.util.Base64.getEncoder().encodeToString(bytes)
             listOf(if (isImage) imageBlk(b64, mime) else audioBlk(b64, mime))
         }
 
@@ -410,8 +466,10 @@ object Mcp {
     }
 
     private fun postNotification(ctx: Context, args: JsonObject): String {
-        val title = args["title"]?.jsonPrimitive?.contentOrNull ?: "androidmcp"
-        val text = args["text"]?.jsonPrimitive?.contentOrNull ?: "(no text)"
+        val title = args["title"]?.jsonPrimitive?.contentOrNull?.takeUnless { it.isBlank() }
+            ?: return "provide a non-empty 'title'"
+        val text = args["text"]?.jsonPrimitive?.contentOrNull?.takeUnless { it.isBlank() }
+            ?: return "provide non-empty 'text'"
         val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val chId = "androidmcp_posted"
         nm.createNotificationChannel(NotificationChannel(chId, "Posted by MCP", NotificationManager.IMPORTANCE_DEFAULT))
@@ -426,15 +484,12 @@ object Mcp {
     }
 
     private suspend fun takePhoto(ctx: Context, args: JsonObject): List<JsonObject> {
-        val facing = args["camera"]?.jsonPrimitive?.contentOrNull ?: "back"
+        val facing = (args["camera"]?.jsonPrimitive?.contentOrNull ?: "back").trim().lowercase()
+        if (facing != "back" && facing != "front") return listOf(textBlk("unknown camera '$facing' — use 'back' or 'front'"))
         val jpeg = CameraCapture.capture(ctx, facing)
             ?: return listOf(textBlk("Camera capture failed or timed out — another app may hold the camera, or the app is backgrounded (open androidmcp and retry)."))
         val opts = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
         android.graphics.BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, opts)
-        runCatching {
-            val dir = java.io.File(ctx.filesDir, "photos").apply { mkdirs() }
-            java.io.File(dir, "last.jpg").writeBytes(jpeg)
-        }
         return listOf(textBlk("Captured ${opts.outWidth}x${opts.outHeight} JPEG from the $facing camera (${jpeg.size} bytes).")) +
             mediaBlocks(jpeg, "image/jpeg", "photo-$facing.jpg", isImage = true)
     }
@@ -443,10 +498,6 @@ object Mcp {
         val secs = (args["seconds"]?.jsonPrimitive?.intOrNull ?: 5).coerceIn(1, 30)
         val bytes = AudioCapture.record(ctx, secs)
             ?: return listOf(textBlk("Audio capture failed — the mic may be in use, or the app is backgrounded (open androidmcp and retry)."))
-        runCatching {
-            val dir = java.io.File(ctx.filesDir, "audio").apply { mkdirs() }
-            java.io.File(dir, "last.m4a").writeBytes(bytes)
-        }
         return listOf(textBlk("Recorded ${secs}s of audio (${bytes.size} bytes, AAC/MP4).")) +
             mediaBlocks(bytes, "audio/mp4", "audio.m4a", isImage = false)
     }
@@ -459,16 +510,12 @@ object Mcp {
             ?: return listOf(textBlk("Screen capture failed — the projection may have been revoked. Re-start screen sharing in androidmcp."))
         val opts = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
         android.graphics.BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, opts)
-        runCatching {
-            val dir = java.io.File(ctx.filesDir, "screens").apply { mkdirs() }
-            java.io.File(dir, "last.jpg").writeBytes(jpeg)
-        }
         return listOf(textBlk("Captured screen ${opts.outWidth}x${opts.outHeight} (${jpeg.size} bytes).")) +
             mediaBlocks(jpeg, "image/jpeg", "screen.jpg", isImage = true)
     }
 
     private fun smsRead(ctx: Context, args: JsonObject): String {
-        val limit = args["limit"]?.jsonPrimitive?.intOrNull ?: 20
+        val limit = (args["limit"]?.jsonPrimitive?.intOrNull ?: 20).coerceIn(1, 200)
         val sb = StringBuilder(); var n = 0
         val cur = ctx.contentResolver.query(
             android.net.Uri.parse("content://sms/inbox"),
@@ -487,7 +534,7 @@ object Mcp {
     }
 
     private fun callLog(ctx: Context, args: JsonObject): String {
-        val limit = args["limit"]?.jsonPrimitive?.intOrNull ?: 20
+        val limit = (args["limit"]?.jsonPrimitive?.intOrNull ?: 20).coerceIn(1, 200)
         val sb = StringBuilder(); var n = 0
         val cur = ctx.contentResolver.query(
             android.provider.CallLog.Calls.CONTENT_URI,
@@ -525,7 +572,7 @@ object Mcp {
     }
 
     private fun readNotifications(args: JsonObject): String {
-        val limit = args["limit"]?.jsonPrimitive?.intOrNull ?: 20
+        val limit = (args["limit"]?.jsonPrimitive?.intOrNull ?: 20).coerceIn(1, 200)
         return McpNotificationListener.readActive(limit)
             ?: "notification listener isn't connected yet — toggle Notification access off/on for androidmcp, then retry"
     }
@@ -762,7 +809,8 @@ object Mcp {
 
     // ---- torch ----
     private fun torch(ctx: Context, args: JsonObject): String {
-        val on = args["on"]?.jsonPrimitive?.booleanOrNull ?: false
+        val on = args["on"]?.jsonPrimitive?.booleanOrNull
+            ?: return "provide 'on': true to switch the light on, false to switch it off"
         val cm = ctx.getSystemService(Context.CAMERA_SERVICE) as? android.hardware.camera2.CameraManager
             ?: return "camera service unavailable"
         val flashId = runCatching {
@@ -1076,8 +1124,9 @@ object Mcp {
             "ring" -> android.media.AudioManager.STREAM_RING
             "alarm" -> android.media.AudioManager.STREAM_ALARM
             "notification" -> android.media.AudioManager.STREAM_NOTIFICATION
+            "voice_call" -> android.media.AudioManager.STREAM_VOICE_CALL
             "system" -> android.media.AudioManager.STREAM_SYSTEM
-            else -> return "unknown stream '$streamName' — use music, ring, alarm, notification, or system"
+            else -> return "unknown stream '$streamName' — use music, ring, alarm, notification, voice_call, or system"
         }
         val level = args["level"]?.jsonPrimitive?.intOrNull
             ?: return "provide an integer 'level'"

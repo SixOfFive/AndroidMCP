@@ -27,6 +27,7 @@ import io.ktor.server.engine.ApplicationEngine
 import io.ktor.server.engine.applicationEngineEnvironment
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.engine.sslConnector
+import io.ktor.server.request.contentLength
 import io.ktor.server.request.receiveText
 import io.ktor.server.response.respondBytes
 import io.ktor.server.response.respondText
@@ -109,12 +110,12 @@ class McpService : Service() {
                         this.host = host
                         this.port = port
                     }
-                    module { installRoutes(applicationContext) }
+                    module { installRoutes { body, client -> Mcp.handle(applicationContext, body, client) } }
                 }
                 embeddedServer(io.ktor.server.netty.Netty, env).start(wait = false)
             } else {
                 embeddedServer(CIO, host = host, port = port) {
-                    installRoutes(applicationContext)
+                    installRoutes { body, client -> Mcp.handle(applicationContext, body, client) }
                 }.start(wait = false)
             }
             running.value = true
@@ -179,8 +180,16 @@ class McpService : Service() {
     }
 }
 
-/** MCP endpoint: bearer-auth + Origin (DNS-rebinding) check, then hand the body to [Mcp]. */
-private fun Application.installRoutes(appCtx: Context) {
+/** Largest MCP request body accepted. A token holder should not be able to OOM the foreground service. */
+internal const val MAX_BODY_BYTES = 512 * 1024L
+
+/**
+ * MCP endpoint: bearer-auth + Origin (DNS-rebinding) check, then hand the body to [handle].
+ *
+ * Takes the handler as a lambda rather than a [Context] so the whole HTTP layer — auth, the
+ * rebinding guard, CORS, the media nonce — is exercisable from `testApplication` with no device.
+ */
+internal fun Application.installRoutes(handle: suspend (body: String, client: String) -> Mcp.Reply) {
     routing {
         // CORS preflight — only honoured when the browser dashboard is opted in.
         options("/mcp") {
@@ -203,21 +212,51 @@ private fun Application.installRoutes(appCtx: Context) {
                 }
                 applyCors(call, origin)
             }
-            val bearer = call.request.headers["Authorization"]?.removePrefix("Bearer ")?.trim()
-            val client = bearer?.let { com.sixoffive.androidmcp.core.TokenStore.verify(it) }
+            val client = authenticate(call)
             if (client == null) {
+                // Name the scheme so a client knows *how* to authenticate. Deliberately no
+                // `resource_metadata`: there is no authorization server, and advertising one
+                // sends clients down an OAuth discovery path that leads nowhere.
+                call.response.headers.append("WWW-Authenticate", "Bearer realm=\"androidmcp\", error=\"invalid_token\"")
                 call.respondText("{\"error\":\"unauthorized\"}", ContentType.Application.Json, HttpStatusCode.Unauthorized)
                 return@post
             }
+
+            // Protocol-version header. Absent means a client predating the header (spec back-compat
+            // says assume 2025-03-26); present-but-unsupported is a 400, not a silent mismatch.
+            val askedVersion = call.request.headers["MCP-Protocol-Version"]
+            if (askedVersion != null && askedVersion !in Mcp.SUPPORTED) {
+                call.respondText(
+                    Mcp.unsupportedProtocolVersion(askedVersion),
+                    ContentType.Application.Json, HttpStatusCode.BadRequest,
+                )
+                return@post
+            }
+
+            val declared = call.request.contentLength()
+            if (declared != null && declared > MAX_BODY_BYTES) {
+                call.respondText("request body too large", status = HttpStatusCode.PayloadTooLarge)
+                return@post
+            }
             val body = call.receiveText()
-            val resp = Mcp.handle(appCtx, body, client)
-            if (resp == null) {
-                call.respondText("", status = HttpStatusCode.Accepted)
-            } else {
-                call.respondText(resp, ContentType.Application.Json)
+            if (body.length > MAX_BODY_BYTES) { // chunked bodies declare no length
+                call.respondText("request body too large", status = HttpStatusCode.PayloadTooLarge)
+                return@post
+            }
+
+            when (val resp = handle(body, client)) {
+                // A notification gets 202 with no body — it MUST NOT be answered.
+                is Mcp.Reply.None -> call.respondText("", status = HttpStatusCode.Accepted)
+                is Mcp.Reply.Body -> call.respondText(resp.json, ContentType.Application.Json)
+                // A body that never parsed into a request is an HTTP-layer failure, not a result.
+                is Mcp.Reply.Rejected -> call.respondText(
+                    resp.json, ContentType.Application.Json, HttpStatusCode.fromValue(resp.status),
+                )
             }
         }
         get("/mcp") {
+            // The spec makes the server-to-client SSE stream a MAY; 405 is the conformant way to
+            // decline it. Nothing here needs to push, and `tools.listChanged` is not declared.
             call.respondText("server-to-client SSE stream not offered", status = HttpStatusCode.MethodNotAllowed)
         }
         // Transient media for resource_link replies. Auth is the unguessable ?k= nonce tied to
@@ -230,11 +269,32 @@ private fun Application.installRoutes(appCtx: Context) {
             }
             val id = call.parameters["id"] ?: return@get call.respondText("not found", status = HttpStatusCode.NotFound)
             val nonce = call.request.queryParameters["k"] ?: ""
-            val e = MediaStore.get(id, nonce)
+            val e = MediaStore.take(id, nonce)
                 ?: return@get call.respondText("not found or expired", status = HttpStatusCode.NotFound)
+            // Capability URLs must not be cached by anything between here and the client, and the
+            // bytes must not be sniffed into an executable type.
+            call.response.headers.append("Cache-Control", "no-store")
+            call.response.headers.append("X-Content-Type-Options", "nosniff")
             call.respondBytes(e.bytes, ContentType.parse(e.mime))
         }
     }
+}
+
+/**
+ * Parse `Authorization: Bearer <token>` and resolve it to a client name.
+ *
+ * The old `removePrefix("Bearer ")` was exact-match, which both rejected a lowercase `bearer`
+ * scheme (legal per RFC 7235 — the scheme is case-insensitive) and, worse, accepted a bare
+ * schemeless token, since `removePrefix` returns the string unchanged when the prefix is absent.
+ */
+private fun authenticate(call: ApplicationCall): String? {
+    val header = call.request.headers["Authorization"] ?: return null
+    val sep = header.indexOf(' ')
+    if (sep < 0) return null
+    if (!header.regionMatches(0, "Bearer", 0, sep, ignoreCase = true) || sep != 6) return null
+    val token = header.substring(sep + 1).trim()
+    if (token.isEmpty()) return null
+    return com.sixoffive.androidmcp.core.TokenStore.verify(token)
 }
 
 /** Reflect the caller's Origin (no cookies are used, so echoing is safe and precise). */
