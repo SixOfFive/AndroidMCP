@@ -22,6 +22,15 @@ object GateEngine {
             )
         }
 
+        // Root-only capabilities
+        if (cap.rootRequired && !Root.isAvailable()) {
+            return GateResult.Denied(
+                ReasonCode.NOT_SUPPORTED_WITHOUT_ROOT, cap, true, false,
+                "This capability requires a rooted device (Magisk su); root was not detected. On a rooted device, grant androidmcp superuser access.",
+                false,
+            )
+        }
+
         // Situational gates for capabilities needing special access / not yet wired
         when (cap.id) {
             "read_notifications" -> {

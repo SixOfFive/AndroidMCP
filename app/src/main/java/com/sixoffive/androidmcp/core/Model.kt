@@ -33,6 +33,7 @@ data class CapabilityMeta(
     val phase: Phase,
     val highImpact: Boolean,        // requires per-call approval once wired
     val requiresForegroundNote: Boolean = false,
+    val rootRequired: Boolean = false, // needs Magisk su; gates to NOT_SUPPORTED_WITHOUT_ROOT otherwise
 ) {
     val toggleLabel: String get() = "Capabilities → $title"
 }

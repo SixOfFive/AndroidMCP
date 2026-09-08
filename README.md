@@ -85,7 +85,8 @@ Reason codes: `FEATURE_DISABLED_IN_APP`, `OS_PERMISSION_NOT_GRANTED`,
 
 ## Capabilities
 
-All default-OFF except `list_capabilities`. All are **non-root** and device-verified.
+All default-OFF except `list_capabilities`. The 16 below are **non-root**; two optional
+**root** tools are covered under [Root vs non-root](#root-vs-non-root). All device-verified.
 
 | Tool | Does | Backing permission / access | High-impact |
 |---|---|---|:---:|
@@ -123,15 +124,16 @@ non-rooted app hits a hard ceiling — these are surfaced as honest refusals, ne
   data, silent `dumpsys` — **not possible** for a normal app.
 - **IMEI / serial** — unavailable to non-privileged apps since Android 10.
 
-### Optional root tier (planned)
+### Optional root tier (built)
 
-On a **rooted** device (Magisk `su`), an opt-in tier can lift that ceiling — e.g.
-`silent_screenshot` (`screencap`), `input` (tap/swipe/text via `input`), `shell`
-(`su -c`, tightly gated), and `read_any_file`. These follow the same model: default-off,
-toggle + **root detection** + per-call approval. Until root is present they appear in
-`tools/list` but return **`NOT_SUPPORTED_WITHOUT_ROOT`**, so nothing silently changes on
-a stock device. (Unisoc tablets like the target are typically unlockable → rootable via
-Magisk; US/Canada Samsungs are not.)
+Two opt-in root capabilities are implemented: **`root_screenshot`** (silent `screencap`,
+no consent prompt or cast indicator) and **`root_shell`** (arbitrary `su -c` — which
+covers input injection, any-file read, dumpsys, and more). Same model: default-off,
+toggle + **root detection** + per-call approval. On a stock (unrooted) device they appear
+in `tools/list` but return **`NOT_SUPPORTED_WITHOUT_ROOT`** (`retriable:false`) — verified,
+so nothing silently changes. The first successful call on a rooted device triggers
+Magisk's one-time superuser grant. (Unisoc tablets like the target are typically
+unlockable → rootable via Magisk; US/Canada Samsungs are not.)
 
 ---
 
@@ -219,7 +221,8 @@ hardware). Before a first real client, pin the transport to the live MCP spec at
 - [x] All 16 capabilities (see table) — every one device-verified
 - [x] Per-call approval; Compose config UI; Setup & reliability card; installer
 - [x] Bind selector; verified over adb-forward, LAN, and Tailscale
-- [ ] Optional root capability tier (silent screenshot, input, shell, any-file)
+- [x] Optional root tier (`root_screenshot`, `root_shell`) — gated to
+      `NOT_SUPPORTED_WITHOUT_ROOT` until rooted; verified refusing on a stock device
 - [ ] "Armed window" UI, `resource_link` media, optional TLS, hardware-aware registry
 
 ---

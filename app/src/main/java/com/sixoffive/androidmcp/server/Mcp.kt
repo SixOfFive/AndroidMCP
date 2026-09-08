@@ -21,6 +21,7 @@ import com.sixoffive.androidmcp.core.CapabilityMeta
 import com.sixoffive.androidmcp.core.ConfigStore
 import com.sixoffive.androidmcp.core.GateEngine
 import com.sixoffive.androidmcp.core.GateResult
+import com.sixoffive.androidmcp.core.Root
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
@@ -79,6 +80,9 @@ object Mcp {
                 }
                 if (cap.id == "run_shortcut") {
                     putJsonObject("package") { put("type", "string") }
+                }
+                if (cap.id == "root_shell") {
+                    putJsonObject("command") { put("type", "string") }
                 }
                 if (cap.id == "record_audio") {
                     putJsonObject("seconds") { put("type", "integer") }
@@ -207,6 +211,8 @@ object Mcp {
         "read_notifications" -> listOf(textBlk(readNotifications(args)))
         "list_files" -> listOf(textBlk(filesRunner(ctx, args)))
         "run_shortcut" -> listOf(textBlk(runShortcut(ctx, args)))
+        "root_screenshot" -> rootScreenshot()
+        "root_shell" -> listOf(textBlk(rootShell(args)))
         else -> listOf(textBlk("not implemented: ${cap.id}"))
     }
 
@@ -421,6 +427,18 @@ object Mcp {
     private fun filesRunner(ctx: Context, args: JsonObject): String {
         val uri = args["uri"]?.jsonPrimitive?.contentOrNull
         return if (uri.isNullOrBlank()) FilesAccess.listAll(ctx) else FilesAccess.read(ctx, uri)
+    }
+
+    private fun rootScreenshot(): List<JsonObject> {
+        val png = Root.execBytes("screencap -p")
+        if (png == null || png.isEmpty()) return listOf(textBlk("root screencap failed or returned no data"))
+        val b64 = android.util.Base64.encodeToString(png, android.util.Base64.NO_WRAP)
+        return listOf(textBlk("silent screenshot (${png.size} bytes, root)"), imageBlk(b64, "image/png"))
+    }
+
+    private fun rootShell(args: JsonObject): String {
+        val cmd = args["command"]?.jsonPrimitive?.contentOrNull ?: return "provide a 'command' to run as root"
+        return Root.exec(cmd).ifBlank { "(no output)" }.take(20000)
     }
 
     private fun runShortcut(ctx: Context, args: JsonObject): String {

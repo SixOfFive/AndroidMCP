@@ -159,6 +159,22 @@ object Capabilities {
             risk = "Medium — performs actions on your device",
             defaultOn = false, phase = Phase.V1_1, highImpact = true,
         ),
+        CapabilityMeta(
+            id = "root_screenshot", title = "Silent screenshot (root)",
+            why = listOf("Capture the screen silently — no consent prompt or cast indicator (root only)"),
+            permissions = emptyList(),
+            dataExposed = "An image of whatever is on your screen",
+            risk = "High — silent, indicator-free screen capture",
+            defaultOn = false, phase = Phase.V1_1, highImpact = true, rootRequired = true,
+        ),
+        CapabilityMeta(
+            id = "root_shell", title = "Root shell",
+            why = listOf("Run a shell command as root — covers input injection, any-file read, dumpsys, and more (root only)"),
+            permissions = emptyList(),
+            dataExposed = "Full device access — anything a root shell can reach",
+            risk = "Critical — unrestricted root command execution",
+            defaultOn = false, phase = Phase.V1_1, highImpact = true, rootRequired = true,
+        ),
     )
 
     fun byId(id: String): CapabilityMeta? = REGISTRY.firstOrNull { it.id == id }
