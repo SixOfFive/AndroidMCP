@@ -10,6 +10,11 @@ camera, mic and files is a remotely-controllable surveillance surface, so every
 capability ships **off** and is unlocked only by explicit, layered consent — and when
 something is blocked, the server tells the model *exactly* what to turn on.
 
+**Nothing is required to be on.** The server and every capability are OFF by default —
+you enable only the features you want a client to have, and each one states exactly what
+it exposes and the risk, right where you toggle it. The only things you must set up to
+connect at all are the server switch and a client token.
+
 > **Status: feature-complete and device-verified.** All 16 capabilities, the double
 > gate, per-call approval, token auth, the config UI, and the installer are built and
 > tested on real hardware (a Samsung Galaxy A03s and a Unisoc tablet), including live

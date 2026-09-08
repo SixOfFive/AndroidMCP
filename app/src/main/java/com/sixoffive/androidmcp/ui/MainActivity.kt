@@ -124,12 +124,18 @@ private fun ServerScreen() {
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             item {
-                Text("androidmcp", style = MaterialTheme.typography.headlineMedium)
-                Text(
-                    "On-device MCP server — default-deny, gated per capability.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("androidmcp", style = MaterialTheme.typography.headlineMedium)
+                    Text(
+                        "On-device MCP server — default-deny, gated per capability.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        "Nothing here is required to be on. The server and every capability stay OFF until you turn them on — enable only the features you want a connected client to have. Each one states exactly what it exposes and the risk, right where you toggle it.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
 
             // ---- server ----
@@ -150,6 +156,19 @@ private fun ServerScreen() {
                             if (on) McpService.start(ctx) else McpService.stop(ctx)
                         })
                     }
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf("loopback", "lan", "tailscale").forEach { mode ->
+                            OutlinedButton(
+                                onClick = { ConfigStore.setBind(mode) },
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                            ) { Text(if (config.bind == mode) "● $mode" else mode, style = MaterialTheme.typography.labelSmall) }
+                        }
+                    }
+                    if (running) Text(
+                        "Restart the server to apply a bind change.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
 
