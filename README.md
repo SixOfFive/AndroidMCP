@@ -90,7 +90,7 @@ Reason codes: `FEATURE_DISABLED_IN_APP`, `OS_PERMISSION_NOT_GRANTED`,
 
 ## Capabilities
 
-All default-OFF except `list_capabilities`. The 16 below need **no root**; two optional
+All default-OFF except `list_capabilities`. The 29 below need **no root**; three optional
 **elevated** tools (Shizuku *or* root) are covered under
 [Root vs non-root](#root-vs-non-root). All device-verified.
 
@@ -111,8 +111,27 @@ All default-OFF except `list_capabilities`. The 16 below need **no root**; two o
 | `read_call_log` | Recent call history | `READ_CALL_LOG` | ✓ |
 | `read_clipboard` / `write_clipboard` | Get / set clipboard | none | read ✓ |
 | `run_shortcut` | Launch an app by package | none | ✓ |
+| `wifi_info` | Wi‑Fi signal (RSSI/level), link speed, frequency, SSID | `ACCESS_WIFI_STATE` (install-time) | |
+| `network_info` | Active transport, connected/metered, carrier | none | |
+| `storage_info` | Internal/external total, free, used | none | |
+| `thermal_status` | Thermal status + headroom | none | |
+| `screen_info` | Resolution, density, refresh, rotation, timeout | none | |
+| `volume_info` | Per-stream volumes + ringer mode | none | |
+| `torch` | Toggle the camera flash LED | none | |
+| `vibrate` | Buzz for N ms | `VIBRATE` (install-time) | |
+| `list_packages` | Installed apps (label + package) | `QUERY_ALL_PACKAGES` | |
+| `launch_url` | Open a URL (ACTION_VIEW) | none | ✓ |
+| `dial` | Pre-fill the dialer (does not call) | none | ✓ |
+| `get_contacts` | Look up contacts (name + numbers) | `READ_CONTACTS` | ✓ |
+| `read_calendar` | Upcoming calendar events | `READ_CALENDAR` | ✓ |
 
 Photos/audio/screenshots return proper MCP `image`/`audio` content blocks.
+
+> **Approvals need notifications.** The high-impact tools (✓) prompt for per-call
+> approval via a notification. On Android 13+ that requires the `POST_NOTIFICATIONS`
+> runtime permission — the app requests it on launch; if you decline, high-impact calls
+> block until they time out (deny). Re-enable it from the app's *Setup & reliability* card
+> or Android's App info → Notifications.
 
 ---
 
@@ -132,9 +151,11 @@ non-rooted app hits a hard ceiling — these are surfaced as honest refusals, ne
 
 ### Optional elevated tier — Shizuku (no root, no wipe) *or* root
 
-Two opt-in elevated capabilities are implemented: **`root_screenshot`** (silent
-`screencap`, no consent prompt or cast indicator) and **`root_shell`** (an arbitrary
-shell command — input injection, any-file read, `dumpsys`, `pm`, `settings`, and more).
+Three opt-in elevated capabilities are implemented: **`root_screenshot`** (silent
+`screencap`, no consent prompt or cast indicator), **`root_shell`** (an arbitrary
+shell command — any-file read, `dumpsys`, `pm`, `settings`, and more), and
+**`elevated_input`** (system-wide `input` injection — tap / swipe / text / keyevent into
+*any* app, which a normal app cannot do).
 Same model as everything else: default-off, in-app toggle + **elevated-access detection**
 + per-call approval. On a device with neither Shizuku nor root they appear in `tools/list`
 but return **`NOT_SUPPORTED_WITHOUT_ROOT`** (`retriable:false`) — verified, so nothing

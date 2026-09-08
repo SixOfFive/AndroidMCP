@@ -89,6 +89,17 @@ private fun ServerScreen() {
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permRefresh++ }
 
+    // Per-call approval prompts (and post_notification) are useless if the app can't post
+    // notifications. On Android 13+ POST_NOTIFICATIONS is a runtime permission — without it
+    // approvals never appear and every high-impact call silently times out. Ask once on launch.
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(ctx, "android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED
+        ) {
+            permLauncher.launch(arrayOf("android.permission.POST_NOTIFICATIONS"))
+        }
+    }
+
     val mpm = remember {
         ctx.getSystemService(android.content.Context.MEDIA_PROJECTION_SERVICE) as android.media.projection.MediaProjectionManager
     }
@@ -213,6 +224,16 @@ private fun ServerScreen() {
                             ctx.startActivity(android.content.Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
                         }
                     }) { Text("Notification access (Read notifications)") }
+                    run {
+                        permRefresh // re-check after a grant
+                        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+                            ContextCompat.checkSelfPermission(ctx, "android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED
+                        ) {
+                            OutlinedButton(onClick = { permLauncher.launch(arrayOf("android.permission.POST_NOTIFICATIONS")) }) {
+                                Text("Enable notifications (approval prompts need this)")
+                            }
+                        }
+                    }
                     run {
                         permRefresh // re-check Shizuku/root state after a grant
                         when {

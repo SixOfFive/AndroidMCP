@@ -150,7 +150,9 @@ const CATS = [
   { id:"overview",  label:"Overview" },
   { id:"sensors",   label:"Sensors & battery" },
   { id:"location",  label:"Location & network" },
+  { id:"state",     label:"Device state" },
   { id:"messaging", label:"Notifications & messages" },
+  { id:"personal",  label:"Contacts & calendar" },
   { id:"files",     label:"Files" },
   { id:"media",     label:"Camera · mic · screen" },
   { id:"clipboard", label:"Clipboard" },
@@ -161,19 +163,23 @@ const CATS = [
 const CAT_OF = {
   list_capabilities:"overview", device_info:"overview",
   battery_status:"sensors", read_sensors:"sensors",
-  get_location:"location",
+  get_location:"location", wifi_info:"location", network_info:"location",
+  storage_info:"state", thermal_status:"state", screen_info:"state", volume_info:"state",
   read_notifications:"messaging", post_notification:"messaging", read_sms:"messaging", read_call_log:"messaging",
+  get_contacts:"personal", read_calendar:"personal",
   list_files:"files",
   take_photo:"media", record_audio:"media", capture_screenshot:"media",
   read_clipboard:"clipboard", write_clipboard:"clipboard",
-  run_shortcut:"system",
-  root_screenshot:"elevated", root_shell:"elevated",
+  run_shortcut:"system", list_packages:"system", launch_url:"system", dial:"system", torch:"system", vibrate:"system",
+  root_screenshot:"elevated", root_shell:"elevated", elevated_input:"elevated",
 };
 const CAT_BLURB = {
   overview:"Identity and status of the device, plus the raw handshake. Start here.",
   sensors:"Live physical readings — accelerometer, light, proximity, magnetometer, and battery. Good candidates for polling.",
-  location:"Where the device is. (Wi‑Fi signal, cell info and more can be added as new tools — they will appear here automatically once the server exposes them.)",
+  location:"Where the device is and how it's connected — GPS fix, Wi‑Fi signal, and the active network. Good candidates for polling.",
+  state:"Read-only device state — storage, thermal status, screen, and volumes. All pollable.",
   messaging:"Notifications and messaging. These expose private content — each is gated and may require per‑call approval on the device.",
+  personal:"Contacts and calendar — dangerous-permission reads, high-impact and per-call approved on the device.",
   files:"Read within folders you explicitly granted in the app (SAF). Nothing outside a granted folder is reachable.",
   media:"Capture from the camera, microphone, or screen. High‑impact — the device may prompt for approval and/or need to be in the foreground.",
   clipboard:"Read or set the clipboard. Reads often hold secrets, so the read is high‑impact and may need the app foregrounded.",
@@ -183,6 +189,7 @@ const CAT_BLURB = {
 };
 // read-only tools that make sense to poll live
 const POLLABLE = new Set(["list_capabilities","device_info","battery_status","read_sensors","get_location",
+  "wifi_info","network_info","storage_info","thermal_status","screen_info","volume_info",
   "read_notifications","read_sms","read_call_log","read_clipboard","list_files","capture_screenshot","root_screenshot"]);
 
 // ---------- state ----------
