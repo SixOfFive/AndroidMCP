@@ -110,12 +110,12 @@ class McpService : Service() {
                         this.host = host
                         this.port = port
                     }
-                    module { installRoutes { body, client -> Mcp.handle(applicationContext, body, client) } }
+                    module { installRoutes { b, c, v -> Mcp.handle(applicationContext, b, c, v) } }
                 }
                 embeddedServer(io.ktor.server.netty.Netty, env).start(wait = false)
             } else {
                 embeddedServer(CIO, host = host, port = port) {
-                    installRoutes { body, client -> Mcp.handle(applicationContext, body, client) }
+                    installRoutes { b, c, v -> Mcp.handle(applicationContext, b, c, v) }
                 }.start(wait = false)
             }
             running.value = true
@@ -198,7 +198,9 @@ internal const val MAX_BODY_BYTES = 512 * 1024L
  * Takes the handler as a lambda rather than a [Context] so the whole HTTP layer — auth, the
  * rebinding guard, CORS, the media nonce — is exercisable from `testApplication` with no device.
  */
-internal fun Application.installRoutes(handle: suspend (body: String, client: String) -> Mcp.Reply) {
+internal fun Application.installRoutes(
+    handle: suspend (body: String, client: String, protocolHeader: String?) -> Mcp.Reply,
+) {
     routing {
         // CORS preflight — only honoured when the browser dashboard is opted in.
         options("/mcp") {
@@ -234,16 +236,10 @@ internal fun Application.installRoutes(handle: suspend (body: String, client: St
                 return@post
             }
 
-            // Protocol-version header. Absent means a client predating the header (spec back-compat
-            // says assume 2025-03-26); present-but-unsupported is a 400, not a silent mismatch.
+            // The MCP-Protocol-Version header is validated inside Mcp.handle, which has already
+            // parsed the method — the check must not apply to `initialize`, whose body carries the
+            // negotiation that resolves a version mismatch.
             val askedVersion = call.request.headers["MCP-Protocol-Version"]
-            if (askedVersion != null && askedVersion !in Mcp.SUPPORTED) {
-                call.respondText(
-                    Mcp.unsupportedProtocolVersion(askedVersion),
-                    ContentType.Application.Json, HttpStatusCode.BadRequest,
-                )
-                return@post
-            }
 
             val declared = call.request.contentLength()
             if (declared != null && declared > MAX_BODY_BYTES) {
@@ -256,7 +252,7 @@ internal fun Application.installRoutes(handle: suspend (body: String, client: St
                 return@post
             }
 
-            when (val resp = handle(body, client)) {
+            when (val resp = handle(body, client, askedVersion)) {
                 // A notification gets 202 with no body — it MUST NOT be answered.
                 is Mcp.Reply.None -> call.respondText("", status = HttpStatusCode.Accepted)
                 is Mcp.Reply.Body -> call.respondText(resp.json, ContentType.Application.Json)

@@ -64,7 +64,13 @@ object Mcp {
         data object None : Reply
     }
 
-    suspend fun handle(ctx: Context, body: String, client: String): Reply {
+    suspend fun handle(
+        ctx: Context,
+        body: String,
+        client: String,
+        /** The request's `MCP-Protocol-Version` header, if it sent one. */
+        protocolHeader: String? = null,
+    ): Reply {
         val root = runCatching { json.parseToJsonElement(body) }.getOrNull()
             ?: return Reply.Rejected(400, errorNoId(-32700, "Parse error"))
         // 2025-06-18 removed JSON-RPC batching, so a top-level array is not a valid request here.
@@ -95,6 +101,16 @@ object Mcp {
             return Reply.Rejected(400, errorNoId(-32600, "Invalid Request: id must be a string or a number"))
         }
         if (method == null) return Reply.Body(error(id, -32600, "Invalid Request: missing method"))
+
+        // Reject an unsupported MCP-Protocol-Version header — but NEVER on `initialize`, which is
+        // the one request whose whole job is to resolve a version mismatch. The negotiation lives
+        // in the body (`params.protocolVersion`), so refusing at the HTTP layer first would break
+        // exactly the mechanism designed to fix this. Observed on the wire: Claude Code 2.1.251
+        // sends no header on initialize, but probes `server/discover` with a future one first and
+        // relies on the 4xx to fall back — so the check must stay for every other method.
+        if (protocolHeader != null && protocolHeader !in SUPPORTED && method != "initialize") {
+            return Reply.Rejected(400, unsupportedProtocolVersion(protocolHeader))
+        }
 
         return runCatching {
             when (method) {

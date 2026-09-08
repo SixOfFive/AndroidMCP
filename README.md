@@ -19,8 +19,8 @@ connect at all are the server switch and a client token.
 > capabilities, the double gate, per-call approval, token auth, the config UI, and the
 > installer are built and tested on real hardware (a Samsung Galaxy A03s and a Unisoc tablet),
 > including live cross-machine connections over **LAN** and **Tailscale**. The JSON-RPC and
-> HTTP layers are covered by **96 JVM unit tests**. **Verified end-to-end with the official MCP
-> Python SDK.** See [Caveats](#caveats).
+> HTTP layers are covered by **99 JVM unit tests**, and it is **driven end to end by two real MCP
+> clients** — the official MCP Python SDK and Claude Code itself. See [Caveats](#caveats).
 
 ---
 
@@ -313,10 +313,11 @@ tailnet-connected machine rather than exposing it publicly.
 ## Caveats
 
 The v1 roadmap is done and the transport has since been pinned to the MCP spec and covered
-by **96 JVM unit tests** (`./gradlew :app:testDebugUnitTest`). Remaining rough edges:
+by **99 JVM unit tests** (`./gradlew :app:testDebugUnitTest`). Remaining rough edges:
 
-- **Only one real client has connected.** The official MCP Python SDK 2.2.0 drives it end to end,
-  but Claude Code, Claude Desktop and the MCP Inspector have not been tried.
+- **Two real clients have connected**: the official MCP Python SDK 2.2.0 and Claude Code 2.1.251
+  (which negotiates down from its own newer revision). Claude Desktop and the MCP Inspector have
+  not been tried.
 - **TLS pulls in the Netty engine** (larger APK), because CIO cannot serve HTTPS at all. The
   cert is self-signed, so a client must pin the SHA-256 the app shows or skip verification;
   Node-based clients have no pinning knob and need the cert as a trusted CA instead.
@@ -389,12 +390,12 @@ The v1 list below was fully checked off; this is its successor.
       `limit:-1` made a full inbox report "no messages" and made `read_notifications` throw;
       `set_volume` rejected the `voice_call` stream that `volume_info` advertises; `take_photo`
       echoed a camera it had not used; `post_notification` silently posted `"(no text)"`.
-- [x] **96 JVM unit tests** — the first in the project. Protocol conformance, the HTTP layer
+- [x] **99 JVM unit tests** — the first in the project. Protocol conformance, the HTTP layer
       (auth, DNS-rebinding guard, CORS, version header, body cap, media nonce), SAF containment,
       TLS cert properties, registry invariants, and schema quality gates. `installRoutes` takes
       the handler as a lambda so the whole HTTP layer runs under `testApplication` with no device.
 
-- [x] **Driven by a real MCP client.** The official **MCP Python SDK 2.2.0** completed the full
+- [x] **Driven by two real MCP clients.** The official **MCP Python SDK 2.2.0** completed the full
       lifecycle against the K70 over LAN: `initialize` (version negotiated, `title` and
       `instructions` parsed), `notifications/initialized`, `ping`, `tools/list` (40 tools, with
       `required` and `annotations` deserialised into the SDK's own types), `tools/call`, and an
@@ -445,8 +446,18 @@ The v1 list below was fully checked off; this is its successor.
 
 **Open:**
 
-- [ ] **Only one real client has driven it.** Claude Code, Claude Desktop and the MCP Inspector
-      have not been tried.
+- [x] **Claude Code drives it.** `claude mcp add --transport http phone http://<host>:8765/mcp
+      --header "Authorization: Bearer <TOKEN>"` → **✔ Connected**. Its handshake is worth knowing,
+      captured with a logging proxy in front of the device:
+      1. `POST server/discover` with `mcp-protocol-version: 2026-07-28` — a **dual-era probe**.
+         This server answers **400** naming `data.supported`, and Claude Code falls back.
+      2. `POST initialize` with `protocolVersion: "2025-11-25"` and **no version header** — the
+         negotiation is in the body. Negotiated down to `2025-06-18` and accepted.
+      3. `notifications/initialized` → 202 · `GET /mcp` (`Accept: text/event-stream`) → 405,
+         tolerated · `tools/list` → 24 KB of schemas, parsed.
+      Answering the probe with **400 rather than 404** is what makes the fallback work; a 404
+      would also have contradicted the revision this server does declare.
+- [ ] **Claude Desktop and the MCP Inspector** have not been tried.
 - [ ] **`outputSchema` + `structuredContent` on success.** Tools return prose a model must parse.
       Declaring an `outputSchema` puts the server in breach of a MUST on every call that does not
       then return conforming structured output, so it is all-or-nothing per tool.

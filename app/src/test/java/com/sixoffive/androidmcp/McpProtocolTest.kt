@@ -33,7 +33,8 @@ class McpProtocolTest {
     private val ctx: Context = Mockito.mock(Context::class.java)
     private val json = Json { ignoreUnknownKeys = true }
 
-    private fun call(body: String): Mcp.Reply = runBlocking { Mcp.handle(ctx, body, "test-client") }
+    private fun call(body: String, header: String? = null): Mcp.Reply =
+        runBlocking { Mcp.handle(ctx, body, "test-client", header) }
 
     private fun bodyOf(reply: Mcp.Reply): JsonObject = when (reply) {
         is Mcp.Reply.Body -> json.parseToJsonElement(reply.json).jsonObject
@@ -269,6 +270,52 @@ class McpProtocolTest {
         // something the server replies to.
         assertIs<Mcp.Reply.None>(call("""{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":"7"}}"""))
         assertIs<Mcp.Reply.None>(call("""{"jsonrpc":"2.0","method":"notifications/cancelled"}"""))
+    }
+
+    // ---- MCP-Protocol-Version header ----
+
+    @Test
+    fun `an unsupported version header rejects an ordinary request`() {
+        val r = call("""{"jsonrpc":"2.0","id":1,"method":"ping"}""", header = "2099-01-01")
+        assertIs<Mcp.Reply.Rejected>(r)
+        assertEquals(400, r.status)
+        assertTrue(Mcp.PROTOCOL in r.json)
+    }
+
+    @Test
+    fun `an unsupported version header does NOT block initialize`() {
+        // initialize is the one request whose job is to resolve a version mismatch — the
+        // negotiation is in the body, so refusing it at the HTTP layer breaks the very mechanism
+        // designed to fix this. Observed on the wire, Claude Code 2.1.251 sends no header on
+        // initialize; a client that did would otherwise have been locked out entirely.
+        val r = call(
+            """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}""",
+            header = "2026-07-28",
+        )
+        assertIs<Mcp.Reply.Body>(r)
+        assertEquals(
+            Mcp.PROTOCOL,
+            bodyOf(r)["result"]!!.jsonObject["protocolVersion"]!!.jsonPrimitive.content,
+        )
+    }
+
+    @Test
+    fun `a future-era discover probe is refused so a dual-era client falls back`() {
+        // Claude Code 2.1.251 probes `server/discover` with a future version header before trying
+        // initialize, and relies on a 4xx to fall back. Answering 200 with a JSON-RPC error, or a
+        // 404, would change how that fallback behaves — this pins the observed-good shape.
+        val r = call(
+            """{"jsonrpc":"2.0","id":"server-discover-probe-1","method":"server/discover"}""",
+            header = "2026-07-28",
+        )
+        assertIs<Mcp.Reply.Rejected>(r)
+        assertEquals(400, r.status)
+    }
+
+    @Test
+    fun `a supported version header is accepted, and an absent one is fine`() {
+        assertIs<Mcp.Reply.Body>(call("""{"jsonrpc":"2.0","id":1,"method":"ping"}""", header = Mcp.PROTOCOL))
+        assertIs<Mcp.Reply.Body>(call("""{"jsonrpc":"2.0","id":1,"method":"ping"}"""))
     }
 
     @Test

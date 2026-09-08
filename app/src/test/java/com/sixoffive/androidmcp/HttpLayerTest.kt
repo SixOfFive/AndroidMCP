@@ -44,7 +44,7 @@ class HttpLayerTest {
 
     /** Routes wired to a handler that just echoes which client authenticated. */
     private fun app(block: suspend (io.ktor.client.HttpClient) -> Unit) = testApplication {
-        application { installRoutes { _, client -> Mcp.Reply.Body("""{"ok":true,"client":"$client"}""") } }
+        application { installRoutes { _, client, _ -> Mcp.Reply.Body("""{"ok":true,"client":"$client"}""") } }
         block(client)
     }
 
@@ -146,31 +146,26 @@ class HttpLayerTest {
     // ---- protocol version header ----
 
     @Test
-    fun `an unsupported MCP-Protocol-Version is a 400 naming what is supported`() = app { c ->
-        val r = c.post("/mcp") {
+    fun `the version header is passed through to the handler, which decides`() = testApplication {
+        // The check moved into Mcp.handle: it must not apply to `initialize`, and only the parsed
+        // method can tell. McpProtocolTest covers the decision; this pins the plumbing.
+        var seen: String? = "not-called"
+        application { installRoutes { _, _, v -> seen = v; Mcp.Reply.Body("{}") } }
+        client.post("/mcp") {
             header("Authorization", "Bearer $token")
             header("MCP-Protocol-Version", "2099-01-01")
             setBody(ping)
         }
-        assertEquals(HttpStatusCode.BadRequest, r.status)
-        assertTrue(r.bodyAsText().contains(Mcp.PROTOCOL))
-    }
-
-    @Test
-    fun `a supported version header passes, and an absent one is allowed for back-compat`() = app { c ->
-        assertEquals(HttpStatusCode.OK, c.post("/mcp") {
-            header("Authorization", "Bearer $token")
-            header("MCP-Protocol-Version", Mcp.PROTOCOL)
-            setBody(ping)
-        }.status)
-        assertEquals(HttpStatusCode.OK, c.post("/mcp") { header("Authorization", "Bearer $token"); setBody(ping) }.status)
+        assertEquals("2099-01-01", seen)
+        client.post("/mcp") { header("Authorization", "Bearer $token"); setBody(ping) }
+        assertEquals(null, seen, "an absent header must arrive as null, not empty string")
     }
 
     // ---- reply shapes ----
 
     @Test
     fun `a notification gets 202 with an empty body`() = testApplication {
-        application { installRoutes { _, _ -> Mcp.Reply.None } }
+        application { installRoutes { _, _, _ -> Mcp.Reply.None } }
         val r = client.post("/mcp") { header("Authorization", "Bearer $token"); setBody("{}") }
         assertEquals(HttpStatusCode.Accepted, r.status)
         assertEquals("", r.bodyAsText())
@@ -178,7 +173,7 @@ class HttpLayerTest {
 
     @Test
     fun `a rejected envelope becomes its HTTP status, not a 200`() = testApplication {
-        application { installRoutes { _, _ -> Mcp.Reply.Rejected(400, """{"jsonrpc":"2.0","error":{"code":-32700}}""") } }
+        application { installRoutes { _, _, _ -> Mcp.Reply.Rejected(400, """{"jsonrpc":"2.0","error":{"code":-32700}}""") } }
         val r = client.post("/mcp") { header("Authorization", "Bearer $token"); setBody("nope") }
         assertEquals(HttpStatusCode.BadRequest, r.status)
     }
