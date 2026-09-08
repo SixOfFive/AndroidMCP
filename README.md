@@ -324,6 +324,11 @@ the live MCP spec at `modelcontextprotocol.io` — the server was verified with 
 - [x] **`resource_link` auto-used for very large media** (>4 MB) even with the toggle off
 - [x] **Persistent, pinnable TLS cert** — generated once, stored as DER, stable SHA-256 shown in
       the app (verified identical across restarts) so a client can pin it
+- [x] **Settings UI grouped** — the one long Server page is split into **Server** /
+      **Connection & transport** / **Startup** cards. Layout verified on-device via
+      screenshots on both the K70 tablet (1280×800) and the SM‑A037W phone (720×1600):
+      the cards render cleanly on a narrow screen and the collapsible capability list
+      (11 categories, per-group counts, expand/collapse) works on the phone.
 
 ---
 
