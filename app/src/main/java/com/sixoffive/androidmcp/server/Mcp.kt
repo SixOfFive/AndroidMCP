@@ -208,14 +208,21 @@ object Mcp {
         put("type", "resource_link"); put("uri", uri); put("name", name); put("mimeType", mime)
     }
 
-    /** Inline base64 (default) or a fetchable resource_link (per the mediaAsLinks toggle). */
+    // Very large media is auto-returned as a resource_link even with the toggle off — a multi-MB
+    // base64 blob inside one JSON-RPC reply is a memory/'too-large-response' hazard for many clients.
+    private const val LARGE_MEDIA_BYTES = 4_000_000
+
+    /** Inline base64, or a fetchable resource_link when "Media as links" is on OR the blob is very large. */
     private fun mediaBlocks(bytes: ByteArray, mime: String, name: String, isImage: Boolean): List<JsonObject> =
-        if (ConfigStore.current.mediaAsLinks) {
+        if (ConfigStore.current.mediaAsLinks || bytes.size > LARGE_MEDIA_BYTES) {
             val (mid, nonce) = MediaStore.put(bytes, mime)
             val scheme = if (ConfigStore.current.tls) "https" else "http"
             // reachableHost, not bindHost: LAN binds 0.0.0.0 but the fetchable address is the LAN IP.
             val host = Net.reachableHost(ConfigStore.current.bind)
-            listOf(resourceLinkBlk("$scheme://$host:${ConfigStore.current.port}/media/$mid?k=$nonce", name, mime))
+            val link = resourceLinkBlk("$scheme://$host:${ConfigStore.current.port}/media/$mid?k=$nonce", name, mime)
+            if (!ConfigStore.current.mediaAsLinks) // auto-linked purely due to size — say why
+                listOf(textBlk("(${bytes.size / 1_000_000}+ MB — returned as a link instead of inline base64)"), link)
+            else listOf(link)
         } else {
             val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
             listOf(if (isImage) imageBlk(b64, mime) else audioBlk(b64, mime))

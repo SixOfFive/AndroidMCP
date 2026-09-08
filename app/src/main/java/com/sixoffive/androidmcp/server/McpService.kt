@@ -101,14 +101,9 @@ class McpService : Service() {
                 // clients must trust it or skip verification. TLS uses the Netty engine because
                 // CIO does not support HTTPS at all (it throws asynchronously). Plain HTTP keeps
                 // the simple, proven CIO bootstrap below.
-                val alias = "androidmcp"
-                val pass = "androidmcp".toCharArray()
-                val ks = io.ktor.network.tls.certificates.buildKeyStore {
-                    certificate(alias) {
-                        password = "androidmcp"
-                        domains = listOf("localhost", "127.0.0.1", host)
-                    }
-                }
+                val alias = TlsKeystore.ALIAS
+                val pass = TlsKeystore.PW
+                val ks = TlsKeystore.loadOrCreate(applicationContext)
                 val env = applicationEngineEnvironment {
                     sslConnector(ks, alias, { pass }, { pass }) {
                         this.host = host

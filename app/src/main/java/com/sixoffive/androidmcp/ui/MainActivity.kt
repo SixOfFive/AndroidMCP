@@ -38,7 +38,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -91,8 +90,6 @@ private fun ServerScreen() {
     var permRefresh by remember { mutableIntStateOf(0) }
     var showBootWarning by remember { mutableStateOf(false) }
     var resumedOnce by remember { mutableStateOf(false) }
-    // Which capability categories are expanded (empty = all collapsed, keeping the long list compact).
-    val expandedCats = remember { mutableStateMapOf<String, Boolean>() }
 
     // Resume-on-launch: if the user Saved an armed start-on-boot config with the server enabled,
     // bring the server back up when the app is opened (mirrors the boot receiver). Runs once.
@@ -254,6 +251,16 @@ private fun ServerScreen() {
                             )
                         }
                         Switch(checked = config.tls, onCheckedChange = { ConfigStore.setTls(it) })
+                    }
+                    run {
+                        val fp = remember(config.tls, running) {
+                            com.sixoffive.androidmcp.server.TlsKeystore.fingerprintSha256(ctx)
+                        }
+                        if (fp != null) Text(
+                            "cert SHA-256 (stable — pin this in your client):\n$fp",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                     HorizontalDivider()
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -422,19 +429,19 @@ private fun ServerScreen() {
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Capabilities", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-                    TextButton(onClick = { Capabilities.CATEGORIES.forEach { expandedCats[it.id] = true } }) { Text("Expand all") }
-                    TextButton(onClick = { expandedCats.clear() }) { Text("Collapse all") }
+                    TextButton(onClick = { ConfigStore.setExpandedCategories(Capabilities.CATEGORIES.map { it.id }.toSet()) }) { Text("Expand all") }
+                    TextButton(onClick = { ConfigStore.setExpandedCategories(emptySet()) }) { Text("Collapse all") }
                 }
             }
             Capabilities.CATEGORIES.forEach { catg ->
               val caps = Capabilities.inCategory(catg.id)
               if (caps.isEmpty()) return@forEach
-              val expanded = expandedCats[catg.id] ?: false
+              val expanded = config.expandedCategories.contains(catg.id)
               val onCount = caps.count { config.enabled.contains(it.id) || it.id == "list_capabilities" }
               item(key = "cat_${catg.id}") {
                   Row(
                       Modifier.fillMaxWidth()
-                          .clickable { expandedCats[catg.id] = !expanded }
+                          .clickable { ConfigStore.setCategoryExpanded(catg.id, !expanded) }
                           .padding(top = 10.dp, bottom = 4.dp),
                       verticalAlignment = Alignment.CenterVertically,
                   ) {

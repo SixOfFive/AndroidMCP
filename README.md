@@ -285,7 +285,8 @@ tailnet-connected machine rather than exposing it publicly.
   warned option. On Tailscale the hop is already WireGuard-encrypted; the bearer token is
   defence-in-depth + client attribution. **Optional HTTPS** (self-signed, via the Netty
   engine) can be toggled on — mostly useful for a bare-LAN bind, since Tailscale already
-  encrypts; clients must trust the self-signed cert or skip verification.
+  encrypts. The self-signed cert is **persistent**, so pin the stable SHA-256 the app shows
+  (or skip verification).
 - Tokens are stored **hashed** (SHA-256, never plaintext); `allowBackup=false`;
   CSPRNG-generated. Every tool call is written to an in-app **audit log**.
 
@@ -293,12 +294,12 @@ tailnet-connected machine rather than exposing it publicly.
 
 ## Caveats
 
-The armed-window, `resource_link`, TLS, and hardware-aware-registry items are now done
-(see Roadmap). Remaining rough edges: the self-signed TLS cert is regenerated each start,
-so clients must skip verification (or a pinned-cert flow is needed) — and TLS pulls in the
-Netty engine (larger); media-as-links keeps bytes only in memory with a 10-minute TTL.
-Before a first real client, pin the transport to the live MCP spec at
-`modelcontextprotocol.io` — the server was verified with `curl` (spec-compatible).
+The roadmap items are all done (see Roadmap). Remaining rough edges: TLS pulls in the Netty
+engine (larger APK) and its cert is self-signed — but now **persistent**, so a client can pin
+the stable SHA-256 the app shows (rather than skipping verification); media-as-links keeps
+bytes only in memory with a 10-minute TTL. Before a first real client, pin the transport to
+the live MCP spec at `modelcontextprotocol.io` — the server was verified with `curl`
+(spec-compatible).
 
 ---
 
@@ -319,9 +320,10 @@ Before a first real client, pin the transport to the live MCP spec at
 - [x] **Hardware-aware registry** — absent-hardware tools auto-marked `HARDWARE_UNAVAILABLE`
 - [x] **Save/load on startup** — options persist; the server auto-resumes on boot / app launch
       only after an explicit, **warned** "Start on boot" is **Saved** (verified via a real reboot)
-- [x] **Grouped capability list** — the 40 tools are organised into 11 categories in the app UI
-- [ ] `resource_link` for very large media by default; hardened cert trust flow; TLS on a
-      client-pinned cert
+- [x] **Grouped capability list** — 40 tools in 11 **collapsible** categories (expanded state persists)
+- [x] **`resource_link` auto-used for very large media** (>4 MB) even with the toggle off
+- [x] **Persistent, pinnable TLS cert** — generated once, stored as DER, stable SHA-256 shown in
+      the app (verified identical across restarts) so a client can pin it
 
 ---
 

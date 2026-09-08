@@ -30,6 +30,7 @@ data class AppConfig(
     val tls: Boolean = false, // serve HTTPS with a self-signed cert instead of plain HTTP
     val startOnBoot: Boolean = false, // UI intent: user wants auto-start on boot/launch (armed only by Save)
     val bootArmed: Boolean = false, // committed by "Save": the boot receiver + launch-resume act ONLY on this
+    val expandedCategories: Set<String> = emptySet(), // which capability-list sections are expanded (UI state)
 )
 
 /** Single observable source of truth for toggles + server settings. */
@@ -47,6 +48,7 @@ object ConfigStore {
     private val KEY_TLS = booleanPreferencesKey("tls")
     private val KEY_START_ON_BOOT = booleanPreferencesKey("start_on_boot")
     private val KEY_BOOT_ARMED = booleanPreferencesKey("boot_armed")
+    private val KEY_EXPANDED_CATS = stringSetPreferencesKey("expanded_categories")
 
     val state = MutableStateFlow(AppConfig())
 
@@ -62,6 +64,7 @@ object ConfigStore {
             tls = p[KEY_TLS] ?: false,
             startOnBoot = p[KEY_START_ON_BOOT] ?: false,
             bootArmed = p[KEY_BOOT_ARMED] ?: false,
+            expandedCategories = p[KEY_EXPANDED_CATS] ?: emptySet(),
         )
     }
 
@@ -101,6 +104,18 @@ object ConfigStore {
 
     /** Blocking one-shot read of the persisted config — for the boot receiver before the flow warms up. */
     fun currentBlocking(): AppConfig = runBlocking { flow.first() }
+
+    fun setCategoryExpanded(id: String, expanded: Boolean) = scope.launch {
+        app.configDataStore.edit { p ->
+            val set = (p[KEY_EXPANDED_CATS] ?: emptySet()).toMutableSet()
+            if (expanded) set.add(id) else set.remove(id)
+            p[KEY_EXPANDED_CATS] = set
+        }
+    }
+
+    fun setExpandedCategories(ids: Set<String>) = scope.launch {
+        app.configDataStore.edit { it[KEY_EXPANDED_CATS] = ids }
+    }
 
     fun addFolder(uri: String) = scope.launch {
         app.configDataStore.edit { p -> p[KEY_FOLDERS] = (p[KEY_FOLDERS] ?: emptySet()) + uri }
