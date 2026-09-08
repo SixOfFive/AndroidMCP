@@ -41,39 +41,48 @@ object CameraCapture {
             } finally { img.close() }
         }, handler)
 
-        var device: CameraDevice? = null
+        // Hold device/session in atomics: they're assigned on the camera handler thread but
+        // released in `finally` on the coroutine thread, and on the timeout path there is no other
+        // happens-before. Failing to release the CameraDevice is exactly what makes the NEXT
+        // capture block on an already-in-use camera.
+        val deviceRef = java.util.concurrent.atomic.AtomicReference<CameraDevice?>()
+        val sessionRef = java.util.concurrent.atomic.AtomicReference<CameraCaptureSession?>()
         try {
             cm.openCamera(camId, object : CameraDevice.StateCallback() {
                 override fun onOpened(d: CameraDevice) {
-                    device = d
+                    deviceRef.set(d)
                     @Suppress("DEPRECATION")
                     d.createCaptureSession(listOf(reader.surface), object : CameraCaptureSession.StateCallback() {
-                        override fun onConfigured(session: CameraCaptureSession) {
+                        override fun onConfigured(s: CameraCaptureSession) {
+                            sessionRef.set(s)
                             val req = d.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
                                 addTarget(reader.surface)
                                 set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
                                 set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
                                 set(CaptureRequest.JPEG_ORIENTATION, chars.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0)
                             }.build()
-                            session.capture(req, null, handler)
+                            runCatching { s.capture(req, null, handler) }
+                                .onFailure { if (!result.isCompleted) result.complete(null) }
                         }
-                        override fun onConfigureFailed(session: CameraCaptureSession) {
+                        override fun onConfigureFailed(s: CameraCaptureSession) {
                             if (!result.isCompleted) result.complete(null)
                         }
                     }, handler)
                 }
-                override fun onDisconnected(d: CameraDevice) { d.close(); if (!result.isCompleted) result.complete(null) }
-                override fun onError(d: CameraDevice, error: Int) { d.close(); if (!result.isCompleted) result.complete(null) }
+                override fun onDisconnected(d: CameraDevice) { deviceRef.set(d); if (!result.isCompleted) result.complete(null) }
+                override fun onError(d: CameraDevice, error: Int) { deviceRef.set(d); if (!result.isCompleted) result.complete(null) }
             }, handler)
-        } catch (t: Throwable) {
-            if (!result.isCompleted) result.complete(null)
-        }
 
-        val bytes = withTimeoutOrNull(8000) { result.await() }
-        runCatching { device?.close() }
-        runCatching { reader.close() }
-        thread.quitSafely()
-        return bytes
+            return withTimeoutOrNull(8000) { result.await() }
+        } catch (t: Throwable) {
+            return null
+        } finally {
+            // Always release, in order: session -> device -> reader -> handler thread.
+            runCatching { sessionRef.getAndSet(null)?.close() }
+            runCatching { deviceRef.getAndSet(null)?.close() }
+            runCatching { reader.close() }
+            thread.quitSafely()
+        }
     }
 
     private fun pickCamera(cm: CameraManager, facing: String): String? {
