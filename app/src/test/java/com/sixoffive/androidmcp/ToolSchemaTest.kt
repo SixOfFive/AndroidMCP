@@ -105,7 +105,7 @@ class ToolSchemaTest {
             "write_clipboard" to "text", "launch_url" to "url", "dial" to "number",
             "elevated_input" to "action", "set_volume" to "level", "media_control" to "action",
             "toast" to "text", "share_text" to "text", "create_calendar_event" to "title",
-            "root_shell" to "command", "run_shortcut" to "package", "open_settings" to "screen",
+            "root_shell" to "command", "run_shortcut" to "package",
             "torch" to "on", "post_notification" to "title",
         )
         mustRequire.forEach { (tool, arg) ->
@@ -113,6 +113,15 @@ class ToolSchemaTest {
             val p = spec.args.firstOrNull { it.name == arg }
             assertTrue(p != null && p.required, "$tool.$arg must be marked required")
         }
+    }
+
+    @Test
+    fun `arguments the handler defaults are optional and declare that default`() {
+        // The mirror of the required check: marking something required when the handler happily
+        // falls back would make the model believe a call is impossible when it is not.
+        val p = ToolSchemas.specFor("open_settings").args.first { it.name == "screen" }
+        assertTrue(!p.required, "open_settings.screen falls back to \"apps\"; it is not required")
+        assertEquals("\"apps\"", p.default?.toString())
     }
 
     @Test

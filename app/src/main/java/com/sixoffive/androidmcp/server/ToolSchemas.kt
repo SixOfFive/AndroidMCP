@@ -234,8 +234,9 @@ internal object ToolSchemas {
         ),
         "open_settings" to Spec(
             "Open a specific Android Settings screen.",
-            listOf(str("screen", "Which Settings screen to open. Note `app_details` opens androidmcp's own App info page.",
-                required = true,
+            // Not required: the handler falls back to "apps" rather than erroring.
+            listOf(str("screen", "Which Settings screen to open. Note `app_details` opens androidmcp's own App info page, not another app's.",
+                default = "apps",
                 enum = listOf("wifi", "bluetooth", "location", "display", "sound", "apps",
                     "app_details", "battery", "date", "security", "home"))),
         ),
