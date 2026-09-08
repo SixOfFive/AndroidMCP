@@ -90,8 +90,9 @@ Reason codes: `FEATURE_DISABLED_IN_APP`, `OS_PERMISSION_NOT_GRANTED`,
 
 ## Capabilities
 
-All default-OFF except `list_capabilities`. The 16 below are **non-root**; two optional
-**root** tools are covered under [Root vs non-root](#root-vs-non-root). All device-verified.
+All default-OFF except `list_capabilities`. The 16 below need **no root**; two optional
+**elevated** tools (Shizuku *or* root) are covered under
+[Root vs non-root](#root-vs-non-root). All device-verified.
 
 | Tool | Does | Backing permission / access | High-impact |
 |---|---|---|:---:|
@@ -129,16 +130,62 @@ non-rooted app hits a hard ceiling — these are surfaced as honest refusals, ne
   data, silent `dumpsys` — **not possible** for a normal app.
 - **IMEI / serial** — unavailable to non-privileged apps since Android 10.
 
-### Optional root tier (built)
+### Optional elevated tier — Shizuku (no root, no wipe) *or* root
 
-Two opt-in root capabilities are implemented: **`root_screenshot`** (silent `screencap`,
-no consent prompt or cast indicator) and **`root_shell`** (arbitrary `su -c` — which
-covers input injection, any-file read, dumpsys, and more). Same model: default-off,
-toggle + **root detection** + per-call approval. On a stock (unrooted) device they appear
-in `tools/list` but return **`NOT_SUPPORTED_WITHOUT_ROOT`** (`retriable:false`) — verified,
-so nothing silently changes. The first successful call on a rooted device triggers
-Magisk's one-time superuser grant. (Unisoc tablets like the target are typically
-unlockable → rootable via Magisk; US/Canada Samsungs are not.)
+Two opt-in elevated capabilities are implemented: **`root_screenshot`** (silent
+`screencap`, no consent prompt or cast indicator) and **`root_shell`** (an arbitrary
+shell command — input injection, any-file read, `dumpsys`, `pm`, `settings`, and more).
+Same model as everything else: default-off, in-app toggle + **elevated-access detection**
++ per-call approval. On a device with neither Shizuku nor root they appear in `tools/list`
+but return **`NOT_SUPPORTED_WITHOUT_ROOT`** (`retriable:false`) — verified, so nothing
+silently changes.
+
+The tier runs on **either** of two backends, whichever is present (checked live at call
+time; Shizuku preferred):
+
+- **Shizuku — non-destructive, no root, no bootloader unlock, no wipe.** Shizuku runs a
+  privileged process as **uid 2000 (`shell`)** — the same identity `adb shell` has — that
+  you start **once over ADB** (`adb shell sh .../start.sh`, or via Android 11+ wireless
+  debugging with no PC at all). The app talks to it over a binder and inherits shell-level
+  power. It survives until reboot; re-run the one-liner after each boot (or automate it).
+  This is the recommended path here because it needs **no unlock and destroys no data.**
+- **Magisk root — full uid 0.** If the device is actually rooted, the same two tools use
+  `su -c` instead. The first call triggers Magisk's one-time superuser prompt.
+
+**Grant it in-app:** *Setup & reliability* shows an *Elevated tier* line — once Shizuku is
+running it becomes a **"Grant Shizuku"** button; after you approve, the two tools light up.
+
+**Does this root the phone too?** Shizuku works on the **Samsung A03s phone as well** — it
+only needs USB/wireless debugging, which the locked phone has, so `root_screenshot` and
+`root_shell` become available on it *without* rooting or unlocking. **But Shizuku is not
+root.** It is uid 2000 (`shell`), not uid 0. It gives the phone exactly ADB's level of
+access — a big step up from a normal app, but strictly below true root. So on the phone
+this is "partial root" in the literal sense: shell privilege, not superuser.
+
+#### What you still **cannot** do without *full* root (uid 0)
+
+Even with Shizuku's shell (uid 2000) granted, these remain impossible — they need real
+root, which on this hardware means unlocking the bootloader (**a full data wipe**) and
+flashing Magisk:
+
+- **Read or write another app's private data** (`/data/data/<pkg>/…`) — shell can't enter
+  other apps' sandboxes; only uid 0 (or the app itself) can.
+- **Read protected partitions / raw storage** — `/data` userdata, another app's
+  `databases/`, keystore-backed material, most of `/proc/<pid>` for other apps.
+- **Remount `/system` or modify system/vendor partitions**, install a system (privileged)
+  app, or change SELinux enforcing state.
+- **`IMEI` / hardware serial** — gated behind `READ_PRIVILEGED_PHONE_STATE`, a
+  signature/privileged permission; shell can't hold it, so even Shizuku can't read them.
+- **Truly persistent, boot-surviving elevation** — Shizuku itself dies on reboot and must
+  be restarted over ADB; only a rooted `su` daemon comes back automatically.
+- **Grant itself arbitrary runtime/special permissions beyond what `shell` may grant** —
+  `pm grant` works for normal dangerous perms, but not for signature/privileged ones.
+
+In short: **Shizuku ≈ everything `adb shell` can do, forever-until-reboot, with no PC and
+no wipe. Full root ≈ everything, full stop — but on locked US/Canada Samsungs it's
+unavailable at all, and on unlockable devices it costs a factory reset.** For this project
+the Shizuku path deliberately trades that last increment of power for keeping the device
+and its data intact.
 
 ---
 

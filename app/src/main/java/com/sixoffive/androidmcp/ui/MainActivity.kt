@@ -117,6 +117,13 @@ private fun ServerScreen() {
         } else perms.all { ContextCompat.checkSelfPermission(ctx, it) == PackageManager.PERMISSION_GRANTED }
     }
 
+    // Refresh elevated-tier state the moment Shizuku grants (or denies) permission.
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        val l = rikka.shizuku.Shizuku.OnRequestPermissionResultListener { _, _ -> permRefresh++ }
+        runCatching { rikka.shizuku.Shizuku.addRequestPermissionResultListener(l) }
+        onDispose { runCatching { rikka.shizuku.Shizuku.removeRequestPermissionResultListener(l) } }
+    }
+
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         LazyColumn(
             Modifier.fillMaxSize().padding(horizontal = 16.dp),
@@ -169,6 +176,17 @@ private fun ServerScreen() {
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Allow browser dashboard", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                "OFF by default. When ON, the server accepts requests from a web page (adds CORS and permits browser Origins) so the local dashboard can reach it. A token is still required, so a random website cannot act — enable this only while you use the dashboard.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(checked = config.allowBrowser, onCheckedChange = { ConfigStore.setAllowBrowser(it) })
+                    }
                 }
             }
 
@@ -195,6 +213,24 @@ private fun ServerScreen() {
                             ctx.startActivity(android.content.Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
                         }
                     }) { Text("Notification access (Read notifications)") }
+                    run {
+                        permRefresh // re-check Shizuku/root state after a grant
+                        when {
+                            com.sixoffive.androidmcp.core.Elevated.shizukuReady() -> Text(
+                                "Elevated tier: ON (via ${com.sixoffive.androidmcp.core.Elevated.source()}) — the silent-screenshot and elevated-shell capabilities can now be enabled below.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            com.sixoffive.androidmcp.core.Elevated.shizukuNeedsGrant() -> OutlinedButton(onClick = {
+                                com.sixoffive.androidmcp.core.Elevated.requestShizuku(4001)
+                            }) { Text("Grant Shizuku (elevated tier)") }
+                            else -> Text(
+                                "Elevated tier (silent screenshot, elevated shell) is optional and OFF. It needs Shizuku — a non-destructive uid-2000 shell you start once over ADB (no root, no unlock, no wipe) — or Magisk root. Start Shizuku and a Grant button appears here.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                     Text(
                         "Sideloaded: if a special-access toggle is greyed out, open App info → ⋮ → 'Allow restricted settings' first. On Samsung, also exclude androidmcp from Device Care → Sleeping apps.",
                         style = MaterialTheme.typography.labelSmall,

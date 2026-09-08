@@ -28,6 +28,7 @@ import io.ktor.server.engine.embeddedServer
 import io.ktor.server.request.receiveText
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
+import io.ktor.server.routing.options
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -157,10 +158,26 @@ class McpService : Service() {
 /** MCP endpoint: bearer-auth + Origin (DNS-rebinding) check, then hand the body to [Mcp]. */
 private fun Application.installRoutes(appCtx: Context) {
     routing {
+        // CORS preflight — only honoured when the browser dashboard is opted in.
+        options("/mcp") {
+            val origin = call.request.headers["Origin"]
+            if (origin != null && ConfigStore.current.allowBrowser) {
+                applyCors(call, origin)
+                call.respondText("", status = HttpStatusCode.NoContent)
+            } else {
+                call.respondText("", status = HttpStatusCode.Forbidden)
+            }
+        }
         post("/mcp") {
-            // Browsers send Origin; MCP clients don't. Reject any browser origin.
-            if (call.request.headers["Origin"] != null) {
-                call.respondText("forbidden origin", status = HttpStatusCode.Forbidden); return@post
+            val origin = call.request.headers["Origin"]
+            // Browsers send Origin; native MCP clients don't. DNS-rebinding guard: reject any
+            // browser origin UNLESS the user turned on "Allow browser dashboard". The bearer
+            // token below is always required regardless, so a drive-by page can't act.
+            if (origin != null) {
+                if (!ConfigStore.current.allowBrowser) {
+                    call.respondText("forbidden origin", status = HttpStatusCode.Forbidden); return@post
+                }
+                applyCors(call, origin)
             }
             val bearer = call.request.headers["Authorization"]?.removePrefix("Bearer ")?.trim()
             val client = bearer?.let { com.sixoffive.androidmcp.core.TokenStore.verify(it) }
@@ -180,4 +197,14 @@ private fun Application.installRoutes(appCtx: Context) {
             call.respondText("server-to-client SSE stream not offered", status = HttpStatusCode.MethodNotAllowed)
         }
     }
+}
+
+/** Reflect the caller's Origin (no cookies are used, so echoing is safe and precise). */
+private fun applyCors(call: ApplicationCall, origin: String) {
+    val h = call.response.headers
+    h.append("Access-Control-Allow-Origin", origin)
+    h.append("Vary", "Origin")
+    h.append("Access-Control-Allow-Methods", "POST, OPTIONS")
+    h.append("Access-Control-Allow-Headers", "Authorization, Content-Type, mcp-protocol-version, mcp-session-id")
+    h.append("Access-Control-Max-Age", "86400")
 }

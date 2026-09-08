@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>androidmcp console</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #141b24; --panel-2: #1b2430; --line: #263241;
+    --ink: #e6edf3; --muted: #8b98a5; --faint: #5c6b7a;
+    --accent: #34d3b5; --accent-ink: #052a24;
+    --hi: #f0b45f; --danger: #f0716e; --ok: #57d777; --off: #6b7684;
+    --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    --sans: "Inter", system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg:#f5f7fa; --panel:#ffffff; --panel-2:#eef2f6; --line:#dce3ea;
+      --ink:#16202b; --muted:#5a6b7b; --faint:#8595a4;
+      --accent:#0f9e86; --accent-ink:#ffffff;
+    }
+  }
+  * { box-sizing: border-box; }
+  html,body { margin:0; height:100%; }
+  body {
+    background: var(--bg); color: var(--ink); font-family: var(--sans);
+    font-size: 14px; line-height: 1.5; display: grid; grid-template-rows: auto 1fr;
+    height: 100vh;
+  }
+  a { color: var(--accent); }
+
+  /* ---- top bar ---- */
+  header {
+    display: flex; gap: 12px; align-items: center; padding: 10px 16px;
+    background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap;
+  }
+  .brand { font-weight: 700; letter-spacing:.2px; display:flex; align-items:center; gap:8px; }
+  .brand .dot { width:9px; height:9px; border-radius:50%; background: var(--off); box-shadow:0 0 0 3px rgba(255,255,255,.03); }
+  .brand.online .dot { background: var(--ok); }
+  .brand.error .dot { background: var(--danger); }
+  header input {
+    background: var(--panel-2); border:1px solid var(--line); color: var(--ink);
+    border-radius: 8px; padding: 7px 10px; font: 13px var(--mono);
+  }
+  header input#base { width: 260px; }
+  header input#token { width: 200px; }
+  header .grow { flex: 1; }
+  button {
+    background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 8px;
+    padding: 7px 14px; font-weight: 600; cursor: pointer; font-size: 13px;
+  }
+  button.ghost { background: transparent; color: var(--ink); border:1px solid var(--line); }
+  button.ghost:hover { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .status-line { font: 12px var(--mono); color: var(--muted); width:100%; }
+  .status-line.err { color: var(--danger); }
+
+  /* ---- layout ---- */
+  main { display: grid; grid-template-columns: 232px 1fr; min-height: 0; }
+  nav {
+    background: var(--panel); border-right: 1px solid var(--line); overflow-y:auto; padding: 10px;
+  }
+  nav .navitem {
+    display:flex; align-items:center; justify-content:space-between; gap:8px;
+    padding: 9px 11px; border-radius: 8px; cursor: pointer; color: var(--muted);
+    font-weight: 600; user-select:none;
+  }
+  nav .navitem:hover { background: var(--panel-2); color: var(--ink); }
+  nav .navitem.active { background: var(--accent); color: var(--accent-ink); }
+  nav .navitem .count { font: 11px var(--mono); opacity:.8; }
+  nav .nav-sep { margin: 12px 6px 6px; font-size:11px; text-transform:uppercase; letter-spacing:.08em; color: var(--faint); }
+
+  section.page { overflow-y: auto; padding: 20px 22px 60px; min-height: 0; }
+  .page-head { margin-bottom: 4px; }
+  .page-head h1 { margin: 0; font-size: 20px; }
+  .page-head p { margin: 4px 0 18px; color: var(--muted); max-width: 70ch; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; align-items:start; }
+
+  /* ---- cards ---- */
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow:hidden; }
+  .card.hi { border-color: color-mix(in srgb, var(--hi) 40%, var(--line)); }
+  .card.elev { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); }
+  .card-h { display:flex; align-items:flex-start; gap:10px; padding: 13px 14px 10px; }
+  .card-h .t { flex:1; min-width:0; }
+  .card-h .t .name { font-weight: 700; }
+  .card-h .t .id { font: 11px var(--mono); color: var(--faint); }
+  .pill { font: 10px var(--mono); padding: 2px 7px; border-radius: 999px; white-space:nowrap; border:1px solid transparent; }
+  .pill.on { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+  .pill.off { color: var(--off); border-color: var(--line); }
+  .pill.hi { color: var(--hi); border-color: color-mix(in srgb, var(--hi) 45%, transparent); }
+  .card-b { padding: 0 14px 14px; }
+  .why { color: var(--muted); font-size: 12.5px; margin: 0 0 10px; }
+  .field { display:flex; flex-direction:column; gap:4px; margin-bottom: 9px; }
+  .field label { font: 11px var(--mono); color: var(--muted); }
+  .field input, .field select, .field textarea {
+    background: var(--panel-2); border:1px solid var(--line); color: var(--ink);
+    border-radius: 8px; padding: 7px 9px; font: 13px var(--mono); width:100%;
+  }
+  .field textarea { min-height: 58px; resize: vertical; }
+  .row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .poll { display:flex; align-items:center; gap:6px; font:11px var(--mono); color: var(--muted); margin-left:auto; }
+  .poll input[type=number]{ width:52px; background:var(--panel-2); border:1px solid var(--line); color:var(--ink); border-radius:6px; padding:3px 5px; font:11px var(--mono); }
+
+  .result { margin-top: 12px; border-top: 1px dashed var(--line); padding-top: 11px; display:none; }
+  .result.show { display:block; }
+  .result .meta { font: 11px var(--mono); color: var(--faint); display:flex; justify-content:space-between; margin-bottom:7px; }
+  .result .meta .ms { color: var(--accent); }
+  .result pre { margin:0; background: var(--panel-2); border-radius: 8px; padding: 10px; overflow-x:auto; font: 12px var(--mono); white-space:pre-wrap; word-break:break-word; }
+  .result img { max-width:100%; border-radius: 8px; border:1px solid var(--line); display:block; }
+  .result audio { width:100%; margin-top:6px; }
+  .refusal { background: color-mix(in srgb, var(--hi) 12%, transparent); border:1px solid color-mix(in srgb,var(--hi) 35%, transparent); border-radius:8px; padding:10px; font-size:12.5px; }
+  .refusal code { color: var(--hi); font: 11px var(--mono); }
+  .rawtoggle { font:11px var(--mono); color:var(--faint); cursor:pointer; user-select:none; }
+  .spin { display:inline-block; width:12px; height:12px; border:2px solid var(--faint); border-top-color:var(--accent); border-radius:50%; animation:sp .7s linear infinite; vertical-align:-2px; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+
+  .empty { color: var(--muted); font-size: 13px; padding: 30px; text-align:center; border:1px dashed var(--line); border-radius:12px; }
+  kbd { font: 11px var(--mono); background: var(--panel-2); border:1px solid var(--line); border-radius:5px; padding:1px 5px; }
+
+  /* overview specials */
+  .kv { display:grid; grid-template-columns: auto 1fr; gap:4px 14px; font:12px var(--mono); }
+  .kv .k { color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand" id="brand"><span class="dot"></span> androidmcp&nbsp;console</div>
+  <input id="base" placeholder="http://192.168.15.123:8765/mcp" />
+  <input id="token" type="password" placeholder="client token" />
+  <button id="connect">Connect</button>
+  <button class="ghost" id="disconnect" style="display:none">Disconnect</button>
+  <div class="grow"></div>
+  <div class="status-line" id="status">Not connected. Enter the tablet's MCP URL + a token, then Connect.</div>
+</header>
+
+<main>
+  <nav id="nav"></nav>
+  <section class="page" id="page">
+    <div class="empty">Connect to a running androidmcp server to load its capabilities.<br><br>
+      In the app: turn the server <b>ON</b>, pick a bind (loopback / lan / tailscale), mint a token,
+      and enable <b>Allow browser dashboard</b> so this page is permitted.</div>
+  </section>
+</main>
+
+<script>
+"use strict";
+// ---------- categories: toolId -> sub-page. Unmapped tools fall into "Other". ----------
+const CATS = [
+  { id:"overview",  label:"Overview" },
+  { id:"sensors",   label:"Sensors & battery" },
+  { id:"location",  label:"Location & network" },
+  { id:"messaging", label:"Notifications & messages" },
+  { id:"files",     label:"Files" },
+  { id:"media",     label:"Camera · mic · screen" },
+  { id:"clipboard", label:"Clipboard" },
+  { id:"system",    label:"System & actions" },
+  { id:"elevated",  label:"Elevated (Shizuku/root)" },
+  { id:"other",     label:"Other" },
+];
+const CAT_OF = {
+  list_capabilities:"overview", device_info:"overview",
+  battery_status:"sensors", read_sensors:"sensors",
+  get_location:"location",
+  read_notifications:"messaging", post_notification:"messaging", read_sms:"messaging", read_call_log:"messaging",
+  list_files:"files",
+  take_photo:"media", record_audio:"media", capture_screenshot:"media",
+  read_clipboard:"clipboard", write_clipboard:"clipboard",
+  run_shortcut:"system",
+  root_screenshot:"elevated", root_shell:"elevated",
+};
+const CAT_BLURB = {
+  overview:"Identity and status of the device, plus the raw handshake. Start here.",
+  sensors:"Live physical readings — accelerometer, light, proximity, magnetometer, and battery. Good candidates for polling.",
+  location:"Where the device is. (Wi‑Fi signal, cell info and more can be added as new tools — they will appear here automatically once the server exposes them.)",
+  messaging:"Notifications and messaging. These expose private content — each is gated and may require per‑call approval on the device.",
+  files:"Read within folders you explicitly granted in the app (SAF). Nothing outside a granted folder is reachable.",
+  media:"Capture from the camera, microphone, or screen. High‑impact — the device may prompt for approval and/or need to be in the foreground.",
+  clipboard:"Read or set the clipboard. Reads often hold secrets, so the read is high‑impact and may need the app foregrounded.",
+  system:"Device actions and inventory.",
+  elevated:"Non‑root by design elsewhere; these two need Shizuku (uid 2000 shell, started over ADB — no wipe) or Magisk root. They return NOT_SUPPORTED_WITHOUT_ROOT until elevated access is present.",
+  other:"Tools the dashboard didn't recognise — rendered generically from their input schema.",
+};
+// read-only tools that make sense to poll live
+const POLLABLE = new Set(["list_capabilities","device_info","battery_status","read_sensors","get_location",
+  "read_notifications","read_sms","read_call_log","read_clipboard","list_files","capture_screenshot","root_screenshot"]);
+
+// ---------- state ----------
+let TOOLS = [];          // [{name, description, inputSchema, cat, enabled, highImpact}]
+let active = "overview";
+let rpcId = 1;
+let serverInfo = null;
+const timers = {};       // toolName -> interval id
+
+const $ = (s, r=document) => r.querySelector(s);
+const el = (t, props={}, kids=[]) => {
+  const n = document.createElement(t);
+  for (const [k,v] of Object.entries(props)) {
+    if (k==="class") n.className = v; else if (k==="html") n.innerHTML = v;
+    else if (k==="text") n.textContent = v; else n.setAttribute(k, v);
+  }
+  (Array.isArray(kids)?kids:[kids]).forEach(c => c && n.appendChild(typeof c==="string"?document.createTextNode(c):c));
+  return n;
+};
+
+function cfg() {
+  return { base: localStorage.getItem("amcp.base")||"", token: localStorage.getItem("amcp.token")||"" };
+}
+function setStatus(msg, err=false){ const s=$("#status"); s.textContent=msg; s.classList.toggle("err",err); }
+function setOnline(state){ // 'online' | 'error' | 'off'
+  const b=$("#brand"); b.classList.remove("online","error"); if(state==="online")b.classList.add("online"); if(state==="error")b.classList.add("error");
+}
+
+// ---------- JSON-RPC ----------
+async function rpc(method, params) {
+  const { base, token } = cfg();
+  const res = await fetch(base, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Accept": "application/json, text/event-stream",
+      "Authorization": "Bearer " + token,
+    },
+    body: JSON.stringify({ jsonrpc:"2.0", id: rpcId++, method, params }),
+  });
+  if (res.status === 401) throw new Error("401 unauthorized — wrong or revoked token");
+  if (res.status === 403) throw new Error("403 forbidden origin — enable 'Allow browser dashboard' in the app");
+  const txt = await res.text();
+  let j; try { j = JSON.parse(txt); } catch { throw new Error("non-JSON reply: "+txt.slice(0,200)); }
+  if (j.error) throw new Error("rpc error "+j.error.code+": "+j.error.message);
+  return j.result;
+}
+
+// ---------- connect ----------
+async function connect() {
+  const base = $("#base").value.trim(), token = $("#token").value.trim();
+  if (!base || !token) { setStatus("Enter both a URL and a token.", true); return; }
+  localStorage.setItem("amcp.base", base); localStorage.setItem("amcp.token", token);
+  setStatus("Connecting…"); setOnline("off");
+  try {
+    const init = await rpc("initialize", { protocolVersion:"2025-06-18", capabilities:{}, clientInfo:{ name:"androidmcp-console", version:"1.0" } });
+    serverInfo = init;
+    const list = await rpc("tools/list", {});
+    TOOLS = (list.tools||[]).map(t => ({
+      name: t.name, description: t.description||"", inputSchema: t.inputSchema||{type:"object",properties:{}},
+      cat: CAT_OF[t.name] || "other",
+      enabled: /currently enabled/i.test(t.description||""),
+      highImpact: /elevated|silent|screen|photo|record|clipboard|sms|call log|location|notification/i.test(t.description||""),
+    }));
+    setOnline("online");
+    const sv = (serverInfo && serverInfo.serverInfo) ? serverInfo.serverInfo : {};
+    setStatus(`Connected · ${TOOLS.length} tools · server ${sv.name||"androidmcp"} ${sv.version||""}`.trim());
+    $("#connect").style.display="none"; $("#disconnect").style.display="";
+    buildNav(); render();
+  } catch (e) {
+    setOnline("error"); setStatus(e.message, true);
+    $("#nav").innerHTML=""; $("#page").innerHTML = `<div class="empty">Could not connect.<br><br><span style="color:var(--danger)">${e.message}</span></div>`;
+  }
+}
+function disconnect(){
+  Object.values(timers).forEach(clearInterval);
+  for(const k in timers) delete timers[k];
+  TOOLS=[]; serverInfo=null; setOnline("off");
+  $("#connect").style.display=""; $("#disconnect").style.display="none";
+  $("#nav").innerHTML=""; $("#page").innerHTML=`<div class="empty">Disconnected.</div>`;
+  setStatus("Disconnected.");
+}
+
+// ---------- nav ----------
+function toolsIn(cat){ return TOOLS.filter(t => t.cat===cat); }
+function buildNav(){
+  const nav = $("#nav"); nav.innerHTML="";
+  nav.appendChild(el("div",{class:"nav-sep",text:"Sub-pages"}));
+  for (const c of CATS) {
+    const n = toolsIn(c.id).length;
+    if (c.id!=="overview" && n===0) continue;
+    const item = el("div",{class:"navitem"+(c.id===active?" active":"")}, [
+      el("span",{text:c.label}), el("span",{class:"count",text: c.id==="overview" ? "" : String(n)}),
+    ]);
+    item.onclick = () => { active=c.id; buildNav(); render(); };
+    nav.appendChild(item);
+  }
+}
+
+// ---------- render a page ----------
+function render(){
+  const page = $("#page"); page.innerHTML="";
+  const cat = CATS.find(c=>c.id===active) || CATS[0];
+  page.appendChild(el("div",{class:"page-head"},[
+    el("h1",{text:cat.label}),
+    el("p",{text: CAT_BLURB[cat.id]||""}),
+  ]));
+
+  if (active==="overview") page.appendChild(overviewPanel());
+
+  const grid = el("div",{class:"grid"});
+  const list = toolsIn(active);
+  if (list.length===0 && active!=="overview") {
+    page.appendChild(el("div",{class:"empty",text:"No tools in this section."})); return;
+  }
+  list.forEach(t => grid.appendChild(toolCard(t)));
+  page.appendChild(grid);
+}
+
+function overviewPanel(){
+  const wrap = el("div",{class:"card",style:"margin-bottom:14px"});
+  wrap.appendChild(el("div",{class:"card-h"},[ el("div",{class:"t"},[ el("div",{class:"name",text:"Connection"}), el("div",{class:"id",text:cfg().base}) ]) ]));
+  const b = el("div",{class:"card-b"});
+  const sv = (serverInfo && serverInfo.serverInfo)||{};
+  const kv = el("div",{class:"kv"});
+  const add=(k,v)=>{ kv.appendChild(el("span",{class:"k",text:k})); kv.appendChild(el("span",{text:v})); };
+  add("server", (sv.name||"?")+" "+(sv.version||""));
+  add("protocol", (serverInfo&&serverInfo.protocolVersion)||"?");
+  add("tools", String(TOOLS.length));
+  add("enabled", String(TOOLS.filter(t=>t.enabled).length)+" / "+TOOLS.length);
+  b.appendChild(kv);
+  b.appendChild(el("p",{class:"why",style:"margin-top:10px",html:"Every capability is gated on the device: an <b>enabled</b> pill means the toggle is on there. A disabled tool still lists here but will refuse until you switch it on in the app."}));
+  wrap.appendChild(b);
+  return wrap;
+}
+
+// ---------- tool card ----------
+function toolCard(t){
+  const props = (t.inputSchema && t.inputSchema.properties) || {};
+  const required = (t.inputSchema && t.inputSchema.required) || [];
+  const card = el("div",{class:"card"+(t.cat==="elevated"?" elev":(t.highImpact?" hi":""))});
+
+  // header
+  const pill = t.enabled ? el("span",{class:"pill on",text:"enabled"}) : el("span",{class:"pill off",text:"disabled"});
+  const head = el("div",{class:"card-h"},[
+    el("div",{class:"t"},[ el("div",{class:"name",text:prettyName(t.name)}), el("div",{class:"id",text:t.name}) ]),
+    pill,
+  ]);
+  card.appendChild(head);
+
+  const body = el("div",{class:"card-b"});
+  body.appendChild(el("p",{class:"why",text: whyText(t.description)}));
+
+  // inputs from schema
+  const inputs = {};
+  for (const [k, spec] of Object.entries(props)) {
+    const f = el("div",{class:"field"});
+    f.appendChild(el("label",{text: k + (required.includes(k)?" *":"") + "  ("+(spec.type||"string")+")"}));
+    let input;
+    if (spec.enum) {
+      input = el("select");
+      spec.enum.forEach(o => input.appendChild(el("option",{value:o,text:o})));
+    } else if (spec.type==="integer" || spec.type==="number") {
+      input = el("input",{type:"number"});
+    } else if (k==="command" || k==="text") {
+      input = el("textarea",{placeholder:k});
+    } else {
+      input = el("input",{type:"text",placeholder:k});
+    }
+    inputs[k] = { input, spec };
+    f.appendChild(input);
+    body.appendChild(f);
+  }
+
+  // controls
+  const runBtn = el("button",{text:"Run"});
+  const row = el("div",{class:"row"},[runBtn]);
+  let pollUi=null;
+  if (POLLABLE.has(t.name)) {
+    const chk = el("input",{type:"checkbox"});
+    const secs = el("input",{type:"number",value:"3",min:"1"});
+    pollUi = el("label",{class:"poll"},[chk," poll every ",secs,"s"]);
+    row.appendChild(pollUi);
+    chk.onchange = () => {
+      if (chk.checked) { const ms=Math.max(1000,(+secs.value||3)*1000); timers[t.name]=setInterval(()=>doRun(t,inputs,resultBox,runBtn,true),ms); doRun(t,inputs,resultBox,runBtn,true); }
+      else { clearInterval(timers[t.name]); delete timers[t.name]; }
+    };
+  }
+  body.appendChild(row);
+
+  const resultBox = el("div",{class:"result"});
+  body.appendChild(resultBox);
+  runBtn.onclick = () => doRun(t, inputs, resultBox, runBtn, false);
+
+  card.appendChild(body);
+  return card;
+}
+
+function collectArgs(inputs){
+  const args={};
+  for (const [k,{input,spec}] of Object.entries(inputs)) {
+    let v = input.value; if (v==="" || v==null) continue;
+    if (spec.type==="integer") v = parseInt(v,10);
+    else if (spec.type==="number") v = parseFloat(v);
+    args[k]=v;
+  }
+  return args;
+}
+
+async function doRun(t, inputs, box, btn, quiet){
+  const args = collectArgs(inputs);
+  if (!quiet) { btn.disabled=true; btn.innerHTML = '<span class="spin"></span>'; }
+  const t0 = performance.now();
+  box.classList.add("show");
+  try {
+    const res = await rpc("tools/call", { name: t.name, arguments: args });
+    renderResult(box, res, Math.round(performance.now()-t0));
+  } catch (e) {
+    box.innerHTML = `<div class="meta"><span>error</span></div><pre style="color:var(--danger)">${escapeHtml(e.message)}</pre>`;
+  } finally {
+    if (!quiet) { btn.disabled=false; btn.textContent="Run"; }
+  }
+}
+
+function renderResult(box, res, ms){
+  box.innerHTML="";
+  const time = new Date().toLocaleTimeString();
+  const meta = el("div",{class:"meta"},[ el("span",{text:time}), el("span",{class:"ms",text:ms+" ms"}) ]);
+  box.appendChild(meta);
+
+  const content = (res && res.content) || [];
+  const isErr = res && res.isError;
+  for (const blk of content) {
+    if (blk.type==="text") {
+      // refusal has structuredContent; show text as-is
+      const pre = el("pre",{text: blk.text});
+      if (isErr) pre.style.color="var(--hi)";
+      box.appendChild(pre);
+    } else if (blk.type==="image") {
+      box.appendChild(el("img",{src:"data:"+(blk.mimeType||"image/png")+";base64,"+blk.data, alt:"image reply"}));
+    } else if (blk.type==="audio") {
+      box.appendChild(el("audio",{controls:"", src:"data:"+(blk.mimeType||"audio/mp4")+";base64,"+blk.data}));
+    } else {
+      box.appendChild(el("pre",{text: JSON.stringify(blk,null,2)}));
+    }
+  }
+  if (res && res.structuredContent) {
+    const sc = res.structuredContent;
+    const code = sc.reason_code || sc.reason || sc.status || "refused";
+    const div = el("div",{class:"refusal"});
+    div.appendChild(el("div",{html:"<b>refused</b> · <code>"+escapeHtml(code)+"</code>"
+      + (sc.gate_failed ? " <span style='color:var(--faint)'>(gate: "+escapeHtml(sc.gate_failed)+")</span>" : "")}));
+    if (sc.remediation) div.appendChild(el("div",{style:"margin-top:5px",text:sc.remediation}));
+    if (Array.isArray(sc.why_required) && sc.why_required.length)
+      div.appendChild(el("div",{style:"margin-top:6px;color:var(--muted);font-size:12px",text:"why it exists: "+sc.why_required.join("; ")}));
+    box.appendChild(div);
+  }
+  // raw toggle
+  const raw = el("pre",{text: JSON.stringify(res,null,2), style:"display:none;margin-top:8px"});
+  const tog = el("div",{class:"rawtoggle",text:"▸ raw json"});
+  tog.onclick = () => { const open=raw.style.display==="none"; raw.style.display=open?"block":"none"; tog.textContent=(open?"▾":"▸")+" raw json"; };
+  box.appendChild(tog); box.appendChild(raw);
+}
+
+// ---------- helpers ----------
+function prettyName(id){ return id.replace(/_/g," ").replace(/\b\w/g,c=>c.toUpperCase()); }
+function whyText(desc){
+  // description = "Title. Why: ...; ... . Exposes: ... . [currently x]"
+  const m = /Why:\s*(.*?)\.\s*Exposes:/s.exec(desc);
+  const ex = /Exposes:\s*(.*?)\.\s*\[/s.exec(desc);
+  let s = m?m[1]:desc;
+  if (ex) s += " · exposes: "+ex[1];
+  return s;
+}
+function escapeHtml(s){ return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+// ---------- boot ----------
+(function boot(){
+  const c = cfg();
+  $("#base").value = c.base || "http://192.168.15.123:8765/mcp";
+  $("#token").value = c.token || "";
+  $("#connect").onclick = connect;
+  $("#disconnect").onclick = disconnect;
+  $("#token").addEventListener("keydown", e => { if(e.key==="Enter") connect(); });
+  $("#base").addEventListener("keydown", e => { if(e.key==="Enter") connect(); });
+})();
+</script>
+</body>
+</html>

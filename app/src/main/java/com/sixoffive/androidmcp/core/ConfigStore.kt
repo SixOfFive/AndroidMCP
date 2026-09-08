@@ -23,6 +23,7 @@ data class AppConfig(
     val port: Int = 8765,
     val bind: String = "loopback", // loopback | lan | tailscale
     val folders: Set<String> = emptySet(), // persisted SAF tree URIs
+    val allowBrowser: Boolean = false, // when true, accept browser Origins + emit CORS (token still required)
 )
 
 /** Single observable source of truth for toggles + server settings. */
@@ -35,6 +36,7 @@ object ConfigStore {
     private val KEY_PORT = intPreferencesKey("port")
     private val KEY_BIND = stringPreferencesKey("bind_mode")
     private val KEY_FOLDERS = stringSetPreferencesKey("folders")
+    private val KEY_BROWSER = booleanPreferencesKey("allow_browser")
 
     val state = MutableStateFlow(AppConfig())
 
@@ -45,6 +47,7 @@ object ConfigStore {
             port = p[KEY_PORT] ?: 8765,
             bind = p[KEY_BIND] ?: "loopback",
             folders = p[KEY_FOLDERS] ?: emptySet(),
+            allowBrowser = p[KEY_BROWSER] ?: false,
         )
     }
 
@@ -71,6 +74,7 @@ object ConfigStore {
 
     fun setBind(mode: String) = scope.launch { app.configDataStore.edit { it[KEY_BIND] = mode } }
     fun setPort(port: Int) = scope.launch { app.configDataStore.edit { it[KEY_PORT] = port } }
+    fun setAllowBrowser(on: Boolean) = scope.launch { app.configDataStore.edit { it[KEY_BROWSER] = on } }
 
     fun addFolder(uri: String) = scope.launch {
         app.configDataStore.edit { p -> p[KEY_FOLDERS] = (p[KEY_FOLDERS] ?: emptySet()) + uri }

@@ -20,8 +20,8 @@ import com.sixoffive.androidmcp.core.Capabilities
 import com.sixoffive.androidmcp.core.CapabilityMeta
 import com.sixoffive.androidmcp.core.ConfigStore
 import com.sixoffive.androidmcp.core.GateEngine
+import com.sixoffive.androidmcp.core.Elevated
 import com.sixoffive.androidmcp.core.GateResult
-import com.sixoffive.androidmcp.core.Root
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
@@ -430,15 +430,15 @@ object Mcp {
     }
 
     private fun rootScreenshot(): List<JsonObject> {
-        val png = Root.execBytes("screencap -p")
-        if (png == null || png.isEmpty()) return listOf(textBlk("root screencap failed or returned no data"))
+        val png = Elevated.execBytes("screencap -p")
+        if (png == null || png.isEmpty()) return listOf(textBlk("silent screencap failed or returned no data"))
         val b64 = android.util.Base64.encodeToString(png, android.util.Base64.NO_WRAP)
-        return listOf(textBlk("silent screenshot (${png.size} bytes, root)"), imageBlk(b64, "image/png"))
+        return listOf(textBlk("silent screenshot (${png.size} bytes, via ${Elevated.source()})"), imageBlk(b64, "image/png"))
     }
 
     private fun rootShell(args: JsonObject): String {
-        val cmd = args["command"]?.jsonPrimitive?.contentOrNull ?: return "provide a 'command' to run as root"
-        return Root.exec(cmd).ifBlank { "(no output)" }.take(20000)
+        val cmd = args["command"]?.jsonPrimitive?.contentOrNull ?: return "provide a 'command' to run"
+        return Elevated.exec(cmd).ifBlank { "(no output)" }.take(20000)
     }
 
     private fun runShortcut(ctx: Context, args: JsonObject): String {

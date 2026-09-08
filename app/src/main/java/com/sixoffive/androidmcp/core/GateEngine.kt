@@ -22,11 +22,11 @@ object GateEngine {
             )
         }
 
-        // Root-only capabilities
-        if (cap.rootRequired && !Root.isAvailable()) {
+        // Elevated (root or Shizuku) capabilities
+        if (cap.rootRequired && !Elevated.isAvailable()) {
             return GateResult.Denied(
                 ReasonCode.NOT_SUPPORTED_WITHOUT_ROOT, cap, true, false,
-                "This capability requires a rooted device (Magisk su); root was not detected. On a rooted device, grant androidmcp superuser access.",
+                "This capability needs elevated access — either Magisk root, or Shizuku (a non-destructive shell / uid-2000 service you start over ADB, no wipe). Neither was detected; start/grant Shizuku (or root the device) and retry.",
                 false,
             )
         }
