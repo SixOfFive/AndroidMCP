@@ -188,7 +188,7 @@ private fun ServerScreen() {
                 }
             }
 
-            // ---- server ----
+            // ---- server: run state + bind ----
             item {
                 SectionCard("Server") {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -219,6 +219,12 @@ private fun ServerScreen() {
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+            }
+
+            // ---- connection & transport ----
+            item {
+                SectionCard("Connection & transport") {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text("Allow browser dashboard", style = MaterialTheme.typography.bodyMedium)
@@ -262,7 +268,12 @@ private fun ServerScreen() {
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    HorizontalDivider()
+                }
+            }
+
+            // ---- startup ----
+            item {
+                SectionCard("Startup") {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text("Start on boot", style = MaterialTheme.typography.bodyMedium)
