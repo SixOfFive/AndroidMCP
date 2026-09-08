@@ -1,64 +1,82 @@
 # androidmcp
 
 An on-device **Model Context Protocol (MCP) server that runs on an Android phone or
-tablet**, exposing the device's own capabilities — camera, files, sensors, location,
-notifications and more — as MCP tools to LLM clients (Claude Code, opencode,
-Claude Desktop, or any MCP-capable tooling).
+tablet**, exposing the device's own capabilities — camera, microphone, files,
+sensors, location, notifications, screen, SMS and more — as MCP tools to LLM clients
+(Claude Code, opencode, Claude Desktop, or any MCP-capable tooling).
 
-Its whole reason for existing is the **permission model**: an LLM that can drive a
-phone's camera, mic and files is a remotely-controllable surveillance surface, so
-every capability ships **off** and is unlocked only by explicit, layered consent —
-and when something is blocked, the server tells the model *exactly* what to turn on.
+Its reason for existing is the **permission model**: an LLM that can drive a phone's
+camera, mic and files is a remotely-controllable surveillance surface, so every
+capability ships **off** and is unlocked only by explicit, layered consent — and when
+something is blocked, the server tells the model *exactly* what to turn on.
 
-> **Status: early, actively being built.** The project scaffolds and builds; the
-> gate engine, MCP server and MVP capabilities are landing incrementally (see
-> [Roadmap](#roadmap)). Nothing here is production-hardened yet.
+> **Status: feature-complete and device-verified.** All 16 capabilities, the double
+> gate, per-call approval, token auth, the config UI, and the installer are built and
+> tested on real hardware (a Samsung Galaxy A03s and a Unisoc tablet), including live
+> cross-machine connections over **LAN** and **Tailscale**. Not yet production-hardened
+> — see [Caveats](#caveats).
+
+---
+
+## Requirements
+
+**To build:**
+- **JDK 17+** (JDK 21 is fine).
+- An **Android SDK** with platforms 34/35 and build-tools (e.g. `~/Android/Sdk`). Set
+  `ANDROID_HOME`, or put `sdk.dir=/path/to/Android/Sdk` in `local.properties`.
+- **adb** on your `PATH` (to install / test).
+- The Gradle wrapper is committed — no separate Gradle install needed.
+
+**To run (on the device):**
+- Android **8.0+ (API 26)**; built against compileSdk 35, **targetSdk 33**.
+- **Sideloaded** (not from Play) — some capabilities use restricted permissions that
+  Play policy would forbid; sideloading sidesteps that. On Android 13+ you may need to
+  tap *App info → ⋮ → Allow restricted settings* before granting Notification/
+  Accessibility access, and (Samsung) exclude the app from *Device Care → Sleeping apps*.
+
+**To connect a client remotely:**
+- **Tailscale** on both the device and the client machine (recommended), **or**
+- both on the **same LAN**, **or**
+- `adb forward` for a purely local test.
 
 ---
 
 ## The double gate (default-deny, checked at every call)
 
-A tool call succeeds only when **all** applicable gates pass, re-evaluated on every
-call — so flipping a toggle off, or revoking an OS permission, fails the very next
-call with a precise reason.
+A tool call succeeds only when **all** applicable gates pass, re-evaluated on every call
+— so flipping a toggle off, or revoking an OS permission, fails the very next call.
 
 1. **In-app toggle** — you explicitly enable the capability in the app. Off by default.
 2. **OS runtime permission** — the backing `android.permission.*` is currently granted.
 3. **Situational** — special access (Notification Listener, all-files), a live
-   MediaProjection session, the app being foregrounded, or **per-call approval** for
-   high-impact tools.
+   MediaProjection session, the app being foregrounded, or **per-call approval**.
 
-> **Per-call approval is not optional for high-impact tools.** The toggle is a
-> *setup-time* control; it does nothing to stop a prompt-injected LLM abusing an
-> *already-enabled* capability (the classic confused-deputy problem). Camera, mic,
-> screenshot, location, SMS/call-log, whole-filesystem and run-shortcut therefore
-> require either a per-call Approve/Deny prompt or a deliberate, time-boxed
-> "armed for N minutes" window, plus rate limits.
+> **Per-call approval is required for high-impact tools.** The toggle is a *setup-time*
+> control; it does nothing to stop a prompt-injected LLM abusing an *already-enabled*
+> capability. Camera, mic, screenshot, location, SMS/call-log, clipboard-read and
+> run-shortcut therefore raise an **Allow / Deny notification** the human must approve
+> (60 s timeout → deny), or an "armed for N minutes" window.
 
 ### When a call is blocked
 
-Tools are **always listed** (never hidden) so the model can discover a capability
-and explain the fix. A blocked call returns a normal result with `isError: true`
-and a machine-readable payload naming the exact toggle, the exact permission, and how
-to fix it — never an opaque protocol error. Example (camera disabled):
+Tools are **always listed** (never hidden) so the model can discover a capability and
+explain the fix. A blocked call returns a normal result with `isError: true` plus a
+machine-readable `structuredContent` naming the exact toggle, permission, and fix.
+Example (camera disabled):
 
 ```json
 {
-  "content": [{ "type": "text",
-    "text": "Camera is disabled. Enable ‘Capabilities → Camera’ in the app and grant the Android CAMERA permission, then retry." }],
+  "content": [{ "type": "text", "text": "Camera is disabled. Enable ‘Capabilities → Camera’ and grant the Android CAMERA permission, then retry." }],
   "structuredContent": {
-    "status": "capability_disabled",
-    "capability": "camera",
-    "gate_failed": "app_toggle",
-    "app_toggle": "Capabilities → Camera", "app_toggle_enabled": false,
-    "os_permission": "android.permission.CAMERA", "os_permission_granted": false,
-    "retriable": true
+    "status": "capability_disabled", "capability": "camera",
+    "gate_failed": "app_toggle", "app_toggle": "Capabilities → Camera", "app_toggle_enabled": false,
+    "os_permission": "android.permission.CAMERA", "os_permission_granted": false, "retriable": true
   },
   "isError": true
 }
 ```
 
-Stable reason codes: `FEATURE_DISABLED_IN_APP`, `OS_PERMISSION_NOT_GRANTED`,
+Reason codes: `FEATURE_DISABLED_IN_APP`, `OS_PERMISSION_NOT_GRANTED`,
 `OS_PERMISSION_PERMANENTLY_DENIED`, `SPECIAL_ACCESS_NOT_ENABLED`,
 `RESTRICTED_SETTINGS_BLOCK`, `REQUIRES_FOREGROUND`, `REQUIRES_PER_SESSION_CONSENT`,
 `REQUIRES_USER_APPROVAL`, `HARDWARE_UNAVAILABLE`, `NOT_SUPPORTED_WITHOUT_ROOT`.
@@ -67,43 +85,57 @@ Stable reason codes: `FEATURE_DISABLED_IN_APP`, `OS_PERMISSION_NOT_GRANTED`,
 
 ## Capabilities
 
-| Tool | Does | Android permission | Phase |
-|---|---|---|---|
-| `list_capabilities` | Report every capability's live gate state | none | MVP (always on) |
-| `device_info` | Model, OS, RAM, CPU, uptime (no IMEI/serial) | none | MVP |
-| `battery_status` | Level, charging, health, temperature | none | MVP |
-| `read_sensors` | Accelerometer, magnetometer, light, proximity… | none / `ACTIVITY_RECOGNITION` | MVP |
-| `get_location` | Current / last-known location | `ACCESS_FINE/COARSE_LOCATION` | MVP |
-| `list_files` / `read_file` | Browse/fetch within granted folders (SAF) | none (SAF) | MVP |
-| `post_notification` | Post to the shade | `POST_NOTIFICATIONS` | MVP |
-| `read_notifications` | List / dismiss active notifications | Notification Listener access | MVP |
-| `take_photo` | Headless still via Camera2 | `CAMERA` | v1.1 |
-| `record_audio` | Bounded mic clip | `RECORD_AUDIO` | v1.1 |
-| `capture_screenshot` | Screen grab via MediaProjection (not silent) | media-projection consent | v1.1 |
-| `read/write_clipboard` | Get/set clipboard (foreground only) | none | v1.1 |
-| `read_sms` / `read_call_log` | Read messages / call history | `READ_SMS` / `READ_CALL_LOG` | v1.1 |
-| `send_sms` | Send (intent-based + confirm) | `SEND_SMS` / intent | v1.1 |
-| `run_shortcut` | Fire an allow-listed Tasker task / intent | none | v1.1 |
-| `read_screen_ui` | Read on-screen UI tree | Accessibility | deferred |
+All default-OFF except `list_capabilities`. All are **non-root** and device-verified.
 
-Capabilities the hardware lacks are auto-marked unsupported (e.g. no SMS on a
-Wi-Fi-only tablet).
+| Tool | Does | Backing permission / access | High-impact |
+|---|---|---|:---:|
+| `list_capabilities` | Report every capability's gate state | none | |
+| `device_info` | Model, OS, RAM, uptime (no IMEI/serial) | none | |
+| `battery_status` | Level, charging, health, temperature | none | |
+| `read_sensors` | Accelerometer, light, proximity, magnetometer | none | |
+| `get_location` | Current / last-known location | `ACCESS_FINE/COARSE_LOCATION` | ✓ |
+| `post_notification` | Post to the shade | `POST_NOTIFICATIONS` | |
+| `read_notifications` | List active notifications | Notification Listener access | ✓ |
+| `list_files` | Browse + read within granted folders (list, or read by URI) | SAF grant | ✓ |
+| `take_photo` | Headless still, front/rear (Camera2) | `CAMERA` | ✓ |
+| `record_audio` | Short mic clip (MediaRecorder) | `RECORD_AUDIO` | ✓ |
+| `capture_screenshot` | Screen frame (MediaProjection) | screen-share consent | ✓ |
+| `read_sms` | Recent received texts | `READ_SMS` | ✓ |
+| `read_call_log` | Recent call history | `READ_CALL_LOG` | ✓ |
+| `read_clipboard` / `write_clipboard` | Get / set clipboard | none | read ✓ |
+| `run_shortcut` | Launch an app by package | none | ✓ |
 
-### The non-root ceiling (honest limits)
+Photos/audio/screenshots return proper MCP `image`/`audio` content blocks.
 
-On a non-rooted device these are surfaced as first-class refusals, never faked:
-silent screenshots, background camera/mic cold-start, background clipboard reads,
-system-wide input injection, and toggling Wi-Fi/Bluetooth/mobile-data/airplane are
-**not possible**; IMEI/serial are unavailable.
+---
+
+## Root vs non-root
+
+**Today every capability is non-root** and works on a stock, locked device. But a
+non-rooted app hits a hard ceiling — these are surfaced as honest refusals, never faked:
+
+- **Silent screenshots** — `capture_screenshot` needs a per-session consent + a visible
+  cast indicator; a truly silent grab is impossible without root.
+- **Background camera/mic cold-start** — the OS only allows capture while the app is
+  foregrounded / a sensor foreground-service is live (`REQUIRES_FOREGROUND`).
+- **Background clipboard reads** — return null unless the app is foregrounded (Android 10+).
+- **System-wide input injection** (tap/type into other apps), reading other apps' private
+  data, silent `dumpsys` — **not possible** for a normal app.
+- **IMEI / serial** — unavailable to non-privileged apps since Android 10.
+
+### Optional root tier (planned)
+
+On a **rooted** device (Magisk `su`), an opt-in tier can lift that ceiling — e.g.
+`silent_screenshot` (`screencap`), `input` (tap/swipe/text via `input`), `shell`
+(`su -c`, tightly gated), and `read_any_file`. These follow the same model: default-off,
+toggle + **root detection** + per-call approval. Until root is present they appear in
+`tools/list` but return **`NOT_SUPPORTED_WITHOUT_ROOT`**, so nothing silently changes on
+a stock device. (Unisoc tablets like the target are typically unlockable → rootable via
+Magisk; US/Canada Samsungs are not.)
 
 ---
 
 ## Build & install
-
-**Prerequisites:** JDK 17+, an Android SDK (platforms 34/35, build-tools), and a
-device with USB debugging (or on the same Tailscale network). The Gradle wrapper is
-committed; `local.properties` (with `sdk.dir=…`) is not — create it or set
-`ANDROID_HOME`.
 
 ```bash
 # build a debug APK
@@ -113,7 +145,8 @@ committed; `local.properties` (with `sdk.dir=…`) is not — create it or set
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Or use the one-shot installer (build + install to whatever is connected):
+Or the one-shot installer (checks prerequisites, builds, installs to every connected
+device; `-s <serial>` for one, `-r` for a release build, `-b` to build only):
 
 ```bash
 ./scripts/build-and-install.sh
@@ -123,25 +156,37 @@ Or use the one-shot installer (build + install to whatever is connected):
 
 ## Connecting a client
 
-The app hosts one Streamable-HTTP endpoint, bound to the device's **Tailscale**
-interface, and every request needs a bearer token generated in-app.
+In the app: flip **Server** on, pick a **bind** (loopback / lan / tailscale), press
+**Generate token**, and enable the capabilities you want. Then point a client at
+`http://<host>:8765/mcp` with the bearer token. Three verified paths:
 
+**Local (bind: loopback) — a laptop test with the device on USB:**
 ```bash
-# Claude Code
-claude mcp add --transport http phone http://<tailnet-ip>:8765/mcp \
-  --header "Authorization: Bearer <TOKEN>"
+adb forward tcp:8765 tcp:8765
+claude mcp add --transport http phone http://127.0.0.1:8765/mcp --header "Authorization: Bearer <TOKEN>"
+```
+
+**LAN (bind: lan) — client and device on the same network:**
+```bash
+# app shows e.g. "listening on 192.168.15.123:8765"
+claude mcp add --transport http tablet http://192.168.15.123:8765/mcp --header "Authorization: Bearer <TOKEN>"
+```
+
+**Tailscale (bind: tailscale) — from anywhere, WireGuard-encrypted (recommended):**
+```bash
+# app shows the device's 100.x tailnet address
+claude mcp add --transport http tablet http://100.127.216.3:8765/mcp --header "Authorization: Bearer <TOKEN>"
 ```
 
 ```jsonc
 // opencode  (discriminator is "remote")
-{ "mcp": { "phone": { "type": "remote", "url": "http://<tailnet-ip>:8765/mcp",
-                      "headers": { "Authorization": "Bearer <TOKEN>" } } } }
+{ "mcp": { "tablet": { "type": "remote", "url": "http://<host>:8765/mcp",
+                       "headers": { "Authorization": "Bearer <TOKEN>" } } } }
 ```
 
 Claude Desktop / claude.ai cloud connectors dial from Anthropic's servers and need a
-public URL, so reach the phone through a **local `mcp-remote` stdio bridge** on a
-tailnet-connected machine rather than exposing it publicly. The app prints ready-to-
-paste snippets (and a QR) per token.
+public URL, so reach the device through a **local `mcp-remote` stdio bridge** on a
+tailnet-connected machine rather than exposing it publicly.
 
 ---
 
@@ -149,62 +194,38 @@ paste snippets (and a QR) per token.
 
 - **Default-deny**, gate re-checked at call time; config lives only in the local UI —
   no MCP tool can enable a capability, mint a token, or widen the bind interface.
-- Bound to the **Tailscale interface only**, never `0.0.0.0`; WireGuard already
-  encrypts the hop, and the bearer token is defence-in-depth + client attribution.
-  Optional TLS is offered for direct-LAN use.
-- Tokens stored **hashed** (never plaintext); `allowBackup=false`; CSPRNG-generated.
-- Every tool call is written to an in-app **audit log**.
+- Bind to **loopback** or the **Tailscale** interface; `lan` binds `0.0.0.0` and is the
+  warned option. On Tailscale the hop is already WireGuard-encrypted; the bearer token is
+  defence-in-depth + client attribution. (Optional TLS is designed but not yet wired.)
+- Tokens are stored **hashed** (SHA-256, never plaintext); `allowBackup=false`;
+  CSPRNG-generated. Every tool call is written to an in-app **audit log**.
 
 ---
 
-## Transports
+## Caveats
 
-Each is a default-off gated feature with a plain "why / why-not":
-
-- **Tailscale** ★ — recommended; encrypted, works over Wi-Fi *and* cellular anywhere.
-- **Wi-Fi / LAN** — local-only, fast; leave off on untrusted networks.
-- **Cellular public IP** — discouraged/usually impossible (CGNAT + exposure); use Tailscale.
-- **Bluetooth** — optional custom transport for offline/proximity only.
+Not yet production-hardened: the "armed for N minutes" approval window has backend
+support but no UI toggle; media returns inline base64 rather than `resource_link`; TLS
+is designed but not wired; the capability registry is static (not yet auto-hidden per
+hardware). Before a first real client, pin the transport to the live MCP spec at
+`modelcontextprotocol.io` — the server was verified with `curl` (spec-compatible).
 
 ---
 
 ## Roadmap
 
-- [x] Project scaffold + green build
-- [x] Core: gate engine, config store, hashed token store, audit log
-- [x] Server: Ktor foreground service, MCP JSON-RPC over Streamable HTTP, bearer auth
-- [x] MVP capabilities (all verified on device): `list_capabilities`, `device_info`,
-      `battery_status`, `read_sensors`, `get_location`, `post_notification`,
-      `read_notifications` (Notification Listener), `list_files` (SAF — folder-picker
-      grant, recursive list + read-by-URI, root correctly blocked)
-- [x] Compose config UI (master switch, per-capability toggles + *why*, token manager, audit)
-- [x] Install & verify against a real MCP client — auth, `tools/list`, an enabled
-      call, and a gated structured refusal all confirmed on the device
-- [x] Per-call approval manager for high-impact tools — Allow/Deny notification +
-      "armed for N minutes" window; verified: `get_location` suspends until approved,
-      then returns a real fix
-- [x] Setup & reliability card — battery-optimization + notification-access
-      deep-links, restricted-settings / Samsung Device Care guidance
-- [ ] `read_notifications` (Notification Listener) + `list_files` (SAF)
-- [x] v1.1 `take_photo` — Camera2 headless capture, returns an MCP image content
-      block, approval-gated; verified on device (real 1080×1440 JPEG captured)
-- [x] v1.1 `read_sms`, `read_call_log`, `read_clipboard`, `write_clipboard` —
-      content-provider reads + clipboard; `read_sms` verified (real messages,
-      approval-gated); clipboard read is honestly foreground-limited
-- [x] v1.1 `record_audio` — MediaRecorder mic clip, returns an MCP audio block,
-      approval-gated; verified (3s AAC/MP4 captured)
-- [x] v1.1 `capture_screenshot` — MediaProjection: UI-initiated consent, then
-      service-side `getMediaProjection` under a mediaProjection-typed FGS; captures
-      a frame via VirtualDisplay+ImageReader. Verified — real screen JPEG captured
-- [x] v1.1 `run_shortcut` — launches an app by package; the approval tap grants
-      the activity-start window, so it works. Verified launching Settings
-- [x] Installer script (`scripts/build-and-install.sh`) — builds + installs to connected devices
+- [x] Scaffold + green build; core (gate, config, hashed tokens, audit)
+- [x] Ktor foreground-service server, MCP JSON-RPC over Streamable HTTP, bearer auth
+- [x] All 16 capabilities (see table) — every one device-verified
+- [x] Per-call approval; Compose config UI; Setup & reliability card; installer
+- [x] Bind selector; verified over adb-forward, LAN, and Tailscale
+- [ ] Optional root capability tier (silent screenshot, input, shell, any-file)
+- [ ] "Armed window" UI, `resource_link` media, optional TLS, hardware-aware registry
 
 ---
 
 ## Scope
 
-A personal, **sideloaded** app for the maintainer's own devices (a Samsung Galaxy
-A03s and a tablet). Because it's sideloaded rather than Play-distributed, Play Store
-policy is not a design constraint — but default-deny and honest disclosure are kept
-as the actual safety story. Not intended for Play distribution as-is.
+A personal, **sideloaded** app for the maintainer's own devices. Because it's not
+Play-distributed, Play policy is not a design constraint — but default-deny and honest
+disclosure are kept as the actual safety story. Not intended for Play distribution as-is.
