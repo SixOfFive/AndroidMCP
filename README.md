@@ -19,7 +19,7 @@ connect at all are the server switch and a client token.
 > capabilities, the double gate, per-call approval, token auth, the config UI, and the
 > installer are built and tested on real hardware (a Samsung Galaxy A03s and a Unisoc tablet),
 > including live cross-machine connections over **LAN** and **Tailscale**. The JSON-RPC and
-> HTTP layers are covered by **70 JVM unit tests**. **No real MCP client has connected yet** —
+> HTTP layers are covered by **71 JVM unit tests**. **No real MCP client has connected yet** —
 > see [Caveats](#caveats).
 
 ---
@@ -313,7 +313,7 @@ tailnet-connected machine rather than exposing it publicly.
 ## Caveats
 
 The v1 roadmap is done and the transport has since been pinned to the MCP spec and covered
-by **70 JVM unit tests** (`./gradlew :app:testDebugUnitTest`). Remaining rough edges:
+by **71 JVM unit tests** (`./gradlew :app:testDebugUnitTest`). Remaining rough edges:
 
 - **No real MCP client has connected yet.** The protocol is now tested against the spec rather
   than by hand with `curl`, but "passes our tests" is not "works with Claude Code".
@@ -390,7 +390,7 @@ The v1 list below was fully checked off; this is its successor.
       `limit:-1` made a full inbox report "no messages" and made `read_notifications` throw;
       `set_volume` rejected the `voice_call` stream that `volume_info` advertises; `take_photo`
       echoed a camera it had not used; `post_notification` silently posted `"(no text)"`.
-- [x] **70 JVM unit tests** — the first in the project. Protocol conformance, the HTTP layer
+- [x] **71 JVM unit tests** — the first in the project. Protocol conformance, the HTTP layer
       (auth, DNS-rebinding guard, CORS, version header, body cap, media nonce), SAF containment,
       TLS cert properties, registry invariants, and schema quality gates. `installRoutes` takes
       the handler as a lambda so the whole HTTP layer runs under `testApplication` with no device.
