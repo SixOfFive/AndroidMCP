@@ -317,6 +317,9 @@ Before a first real client, pin the transport to the live MCP spec at
 - [x] **Optional TLS** — self-signed HTTPS via the Netty engine (CIO stays HTTP);
       verified `https://` initialize on-device
 - [x] **Hardware-aware registry** — absent-hardware tools auto-marked `HARDWARE_UNAVAILABLE`
+- [x] **Save/load on startup** — options persist; the server auto-resumes on boot / app launch
+      only after an explicit, **warned** "Start on boot" is **Saved** (verified via a real reboot)
+- [x] **Grouped capability list** — the 40 tools are organised into 11 categories in the app UI
 - [ ] `resource_link` for very large media by default; hardened cert trust flow; TLS on a
       client-pinned cert
 

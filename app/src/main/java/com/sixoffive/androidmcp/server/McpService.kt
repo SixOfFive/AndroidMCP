@@ -90,7 +90,9 @@ class McpService : Service() {
     }
 
     private fun startServer() {
-        val cfg = ConfigStore.current
+        // Read the SAVED config synchronously — at boot the async StateFlow (ConfigStore.current)
+        // hasn't populated yet, so it would bind default options (loopback) instead of the user's.
+        val cfg = runCatching { ConfigStore.currentBlocking() }.getOrDefault(ConfigStore.current)
         val host = Net.bindHost(cfg.bind)
         val port = cfg.port
         try {

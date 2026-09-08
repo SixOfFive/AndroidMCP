@@ -31,10 +31,13 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.material3.AlertDialog
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -84,6 +87,17 @@ private fun ServerScreen() {
     val minted by TokenStore.freshlyMinted.collectAsState()
     val audit by AuditLog.entries.collectAsState()
     var permRefresh by remember { mutableIntStateOf(0) }
+    var showBootWarning by remember { mutableStateOf(false) }
+    var resumedOnce by remember { mutableStateOf(false) }
+
+    // Resume-on-launch: if the user Saved an armed start-on-boot config with the server enabled,
+    // bring the server back up when the app is opened (mirrors the boot receiver). Runs once.
+    LaunchedEffect(config.bootArmed, config.masterOn) {
+        if (!resumedOnce && config.bootArmed && config.masterOn && !running) {
+            resumedOnce = true
+            McpService.start(ctx)
+        }
+    }
 
     val permLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -133,6 +147,23 @@ private fun ServerScreen() {
         val l = rikka.shizuku.Shizuku.OnRequestPermissionResultListener { _, _ -> permRefresh++ }
         runCatching { rikka.shizuku.Shizuku.addRequestPermissionResultListener(l) }
         onDispose { runCatching { rikka.shizuku.Shizuku.removeRequestPermissionResultListener(l) } }
+    }
+
+    if (showBootWarning) {
+        AlertDialog(
+            onDismissRequest = { showBootWarning = false },
+            title = { Text("Start the server on boot?") },
+            text = {
+                Text(
+                    "If you enable this and press Save, the MCP server — and every capability you've turned on — " +
+                        "will start automatically whenever the device boots or you open the app, reachable on the " +
+                        "'${config.bind}' interface by anyone holding a valid token, without you opening the app first. " +
+                        "Nothing starts on boot until you press Save."
+                )
+            },
+            confirmButton = { TextButton(onClick = { ConfigStore.setStartOnBoot(true); showBootWarning = false }) { Text("Enable") } },
+            dismissButton = { TextButton(onClick = { showBootWarning = false }) { Text("Cancel") } },
+        )
     }
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -219,6 +250,41 @@ private fun ServerScreen() {
                             )
                         }
                         Switch(checked = config.tls, onCheckedChange = { ConfigStore.setTls(it) })
+                    }
+                    HorizontalDivider()
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Start on boot", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                "OFF by default. Auto-starts the server on device boot and when the app opens — exposing your enabled capabilities without you opening the app. Enabling shows a warning, and it only takes effect after you press Save.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = config.startOnBoot,
+                            onCheckedChange = { on -> if (on) showBootWarning = true else ConfigStore.setStartOnBoot(false) },
+                        )
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            when {
+                                config.startOnBoot != config.bootArmed -> "Unsaved — press Save to apply start-on-boot"
+                                config.bootArmed -> "Saved — server auto-starts on boot / app launch"
+                                else -> "Not armed — start the server manually each time"
+                            },
+                            Modifier.weight(1f),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = when {
+                                config.startOnBoot != config.bootArmed -> MaterialTheme.colorScheme.error
+                                config.bootArmed -> MaterialTheme.colorScheme.primary
+                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                        OutlinedButton(
+                            onClick = { ConfigStore.saveStartup() },
+                            enabled = config.startOnBoot != config.bootArmed,
+                        ) { Text("Save") }
                     }
                 }
             }
@@ -350,7 +416,18 @@ private fun ServerScreen() {
 
             // ---- capabilities ----
             item { Text("Capabilities", style = MaterialTheme.typography.titleMedium) }
-            items(Capabilities.REGISTRY) { cap ->
+            Capabilities.CATEGORIES.forEach { catg ->
+              val caps = Capabilities.inCategory(catg.id)
+              if (caps.isEmpty()) return@forEach
+              item(key = "cat_${catg.id}") {
+                  Text(
+                      catg.label + "  (" + caps.count { config.enabled.contains(it.id) || it.id == "list_capabilities" } + "/" + caps.size + ")",
+                      style = MaterialTheme.typography.titleSmall,
+                      color = MaterialTheme.colorScheme.primary,
+                      modifier = Modifier.padding(top = 10.dp, bottom = 2.dp),
+                  )
+              }
+              items(caps, key = { it.id }) { cap ->
                 val enabled = config.enabled.contains(cap.id) || cap.id == "list_capabilities"
                 val permsOk = granted(cap.permissions)
                 val hwMissing = com.sixoffive.androidmcp.core.HardwareCheck.missing(ctx, cap.id)
@@ -404,6 +481,7 @@ private fun ServerScreen() {
                         }
                     }
                 }
+            }
             }
 
             // ---- audit ----

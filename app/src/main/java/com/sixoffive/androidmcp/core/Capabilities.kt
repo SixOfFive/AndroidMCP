@@ -420,4 +420,39 @@ object Capabilities {
     )
 
     fun byId(id: String): CapabilityMeta? = REGISTRY.firstOrNull { it.id == id }
+
+    /** UI grouping so the (now 40-entry) list is navigable. Ordered; headers shown in this order. */
+    data class Category(val id: String, val label: String)
+
+    val CATEGORIES: List<Category> = listOf(
+        Category("core", "Core & device"),
+        Category("sensors", "Sensors & battery"),
+        Category("location", "Location & network"),
+        Category("state", "Device state"),
+        Category("messaging", "Notifications & messages"),
+        Category("personal", "Contacts & calendar"),
+        Category("files", "Files"),
+        Category("media", "Camera · mic · screen"),
+        Category("clipboard", "Clipboard"),
+        Category("actions", "Actions & apps"),
+        Category("elevated", "Elevated (Shizuku / root)"),
+    )
+
+    fun categoryOf(id: String): String = when (id) {
+        "list_capabilities", "device_info" -> "core"
+        "battery_status", "read_sensors" -> "sensors"
+        "get_location", "wifi_info", "network_info" -> "location"
+        "storage_info", "thermal_status", "screen_info", "volume_info" -> "state"
+        "read_notifications", "post_notification", "read_sms", "read_call_log" -> "messaging"
+        "get_contacts", "read_calendar", "create_calendar_event" -> "personal"
+        "list_files" -> "files"
+        "take_photo", "record_audio", "capture_screenshot" -> "media"
+        "read_clipboard", "write_clipboard" -> "clipboard"
+        "run_shortcut", "list_packages", "launch_url", "dial", "torch", "vibrate",
+        "set_volume", "media_control", "toast", "share_text", "open_settings" -> "actions"
+        "root_screenshot", "root_shell", "elevated_input", "elevated_current_app", "elevated_settings" -> "elevated"
+        else -> "actions"
+    }
+
+    fun inCategory(catId: String): List<CapabilityMeta> = REGISTRY.filter { categoryOf(it.id) == catId }
 }
