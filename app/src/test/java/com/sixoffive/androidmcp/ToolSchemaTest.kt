@@ -173,6 +173,21 @@ class ToolSchemaTest {
     }
 
     @Test
+    fun `argument validation throws rather than returning an error string`() {
+        // Found by driving the real MCP Python SDK at the device: `torch {}` came back as
+        // isError:false with the body "provide 'on': …". A handler that *returns* its complaint
+        // produces a SUCCESSFUL tool result whose text merely reads like an error, which a model
+        // has no reliable way to distinguish from a real answer.
+        val offenders = mcpCode.lineSequence()
+            .filter { Regex("""return\s+"(provide|put needs|unknown (action|stream|screen))""").containsMatchIn(it) }
+            .map { it.trim() }
+            .toList()
+        assertTrue(offenders.isEmpty(),
+            "these return an argument error as a success; throw ToolArgError instead:\n" +
+                offenders.joinToString("\n"))
+    }
+
+    @Test
     fun `descriptions do not embed volatile enabled state`() {
         // Clients cache tools/list at connect and there is no listChanged channel, so a
         // "[currently disabled]" suffix would be wrong for the rest of the session.

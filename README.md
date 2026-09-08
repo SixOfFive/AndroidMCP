@@ -19,8 +19,8 @@ connect at all are the server switch and a client token.
 > capabilities, the double gate, per-call approval, token auth, the config UI, and the
 > installer are built and tested on real hardware (a Samsung Galaxy A03s and a Unisoc tablet),
 > including live cross-machine connections over **LAN** and **Tailscale**. The JSON-RPC and
-> HTTP layers are covered by **71 JVM unit tests**. **No real MCP client has connected yet** —
-> see [Caveats](#caveats).
+> HTTP layers are covered by **76 JVM unit tests**. **Verified end-to-end with the official MCP
+> Python SDK.** See [Caveats](#caveats).
 
 ---
 
@@ -313,10 +313,10 @@ tailnet-connected machine rather than exposing it publicly.
 ## Caveats
 
 The v1 roadmap is done and the transport has since been pinned to the MCP spec and covered
-by **71 JVM unit tests** (`./gradlew :app:testDebugUnitTest`). Remaining rough edges:
+by **76 JVM unit tests** (`./gradlew :app:testDebugUnitTest`). Remaining rough edges:
 
-- **No real MCP client has connected yet.** The protocol is now tested against the spec rather
-  than by hand with `curl`, but "passes our tests" is not "works with Claude Code".
+- **Only one real client has connected.** The official MCP Python SDK 2.2.0 drives it end to end,
+  but Claude Code, Claude Desktop and the MCP Inspector have not been tried.
 - **TLS pulls in the Netty engine** (larger APK), because CIO cannot serve HTTPS at all. The
   cert is self-signed, so a client must pin the SHA-256 the app shows or skip verification;
   Node-based clients have no pinning knob and need the cert as a trusted CA instead.
@@ -390,15 +390,29 @@ The v1 list below was fully checked off; this is its successor.
       `limit:-1` made a full inbox report "no messages" and made `read_notifications` throw;
       `set_volume` rejected the `voice_call` stream that `volume_info` advertises; `take_photo`
       echoed a camera it had not used; `post_notification` silently posted `"(no text)"`.
-- [x] **71 JVM unit tests** — the first in the project. Protocol conformance, the HTTP layer
+- [x] **76 JVM unit tests** — the first in the project. Protocol conformance, the HTTP layer
       (auth, DNS-rebinding guard, CORS, version header, body cap, media nonce), SAF containment,
       TLS cert properties, registry invariants, and schema quality gates. `installRoutes` takes
       the handler as a lambda so the whole HTTP layer runs under `testApplication` with no device.
 
-**Open:**
+- [x] **Driven by a real MCP client.** The official **MCP Python SDK 2.2.0** completed the full
+      lifecycle against the K70 over LAN: `initialize` (version negotiated, `title` and
+      `instructions` parsed), `notifications/initialized`, `ping`, `tools/list` (40 tools, with
+      `required` and `annotations` deserialised into the SDK's own types), `tools/call`, and an
+      unknown tool surfacing as an `MCPError` rather than a tool result. This is what every fix
+      above was for, and it immediately found two defects no unit test could — see below.
+- [x] **Argument errors were reported as successes.** ~27 handlers `return`ed their complaint as
+      an ordinary string, which became a **successful** tool result whose text merely read like an
+      error: `torch {}` came back `isError: false` with the body "provide 'on': …". Only visible
+      by watching a real client parse the reply. Now a typed `ToolArgError`, audited as
+      `INVALID_ARGUMENT`, with a test that fails if any handler goes back to returning one.
+- [x] **`gate_failed` contradicted `retriable`.** It was inferred from the toggle/permission
+      booleans while ignoring the reason code, so a capability refused because the hardware is
+      absent reported `gate_failed: "app_toggle"` — telling a model to flip a switch that cannot
+      help. Now derived from the reason code: `hardware` / `elevated_access` / `special_access` /
+      `app_toggle` / `os_permission`. Verified on the K70 across all three.
 
-- [ ] **Connect a real MCP client** (Claude Code `--transport http`, the MCP Inspector) — the
-      point of everything above, and still unverified.
+**Open:**
 - [ ] **`resources/list` + `resources/read`** so `resource_link` media is dereferenceable through
       the protocol rather than only over plain HTTP.
 - [ ] **Origin allowlist** instead of reflecting any browser Origin when the dashboard is opted in.

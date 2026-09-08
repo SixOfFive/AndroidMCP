@@ -30,6 +30,16 @@ import kotlinx.serialization.json.*
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
+/**
+ * A tool was called with missing or unusable arguments.
+ *
+ * Handlers used to `return` these as ordinary strings, which became a **successful** tool result
+ * whose text happened to read like an error — so a model calling `torch {}` got back
+ * `isError: false` with the body "provide 'on': …". Found by driving the server with the real
+ * MCP Python SDK; no unit test caught it because the string was the documented return value.
+ */
+internal class ToolArgError(message: String) : Exception(message)
+
 /** Hand-rolled MCP JSON-RPC handler over Streamable HTTP. */
 object Mcp {
     /** The one protocol revision this server implements. `initialize` negotiates against this set. */
@@ -213,9 +223,16 @@ object Mcp {
                         result(id, successResult(content))
                     },
                     onFailure = { t ->
-                        val why = "${t::class.java.simpleName}: ${t.message}"
-                        AuditLog.record(cap.id, client, false, "EXECUTION_ERROR: $why")
-                        result(id, errorResult("${cap.title} failed: $why"))
+                        if (t is ToolArgError) {
+                            // A bad call, not a broken device: report the handler's own guidance
+                            // verbatim, but as isError so the model cannot read it as success.
+                            AuditLog.record(cap.id, client, false, "INVALID_ARGUMENT: ${t.message}")
+                            result(id, errorResult(t.message ?: "invalid arguments"))
+                        } else {
+                            val why = "${t::class.java.simpleName}: ${t.message}"
+                            AuditLog.record(cap.id, client, false, "EXECUTION_ERROR: $why")
+                            result(id, errorResult("${cap.title} failed: $why"))
+                        }
                     },
                 )
             }
@@ -335,10 +352,27 @@ object Mcp {
         put("isError", true)
     }
 
-    private fun gateFailed(d: GateResult.Denied): String = when {
-        !d.toggleEnabled -> "app_toggle"
-        !d.permissionGranted -> "os_permission"
-        else -> "special_access"
+    /**
+     * Which gate actually failed, as a machine-readable token.
+     *
+     * This used to be inferred purely from the toggle/permission booleans, ignoring the reason
+     * code — so a capability refused because the hardware is absent reported
+     * `gate_failed: "app_toggle"` (the toggle is off, but that is not why it failed). A model
+     * reading that tells the user to flip a switch that cannot help; the companion `retriable`
+     * was already false, so the two fields contradicted each other.
+     */
+    private fun gateFailed(d: GateResult.Denied): String = when (d.reason) {
+        com.sixoffive.androidmcp.core.ReasonCode.HARDWARE_UNAVAILABLE -> "hardware"
+        com.sixoffive.androidmcp.core.ReasonCode.NOT_SUPPORTED_WITHOUT_ROOT -> "elevated_access"
+        com.sixoffive.androidmcp.core.ReasonCode.SPECIAL_ACCESS_NOT_ENABLED -> "special_access"
+        com.sixoffive.androidmcp.core.ReasonCode.FEATURE_DISABLED_IN_APP -> "app_toggle"
+        com.sixoffive.androidmcp.core.ReasonCode.OS_PERMISSION_NOT_GRANTED,
+        com.sixoffive.androidmcp.core.ReasonCode.OS_PERMISSION_PERMANENTLY_DENIED -> "os_permission"
+        else -> when {
+            !d.toggleEnabled -> "app_toggle"
+            !d.permissionGranted -> "os_permission"
+            else -> "special_access"
+        }
     }
 
     // ---- capability runners ----
@@ -467,9 +501,9 @@ object Mcp {
 
     private fun postNotification(ctx: Context, args: JsonObject): String {
         val title = args["title"]?.jsonPrimitive?.contentOrNull?.takeUnless { it.isBlank() }
-            ?: return "provide a non-empty 'title'"
+            ?: throw ToolArgError("provide a non-empty 'title'")
         val text = args["text"]?.jsonPrimitive?.contentOrNull?.takeUnless { it.isBlank() }
-            ?: return "provide non-empty 'text'"
+            ?: throw ToolArgError("provide non-empty 'text'")
         val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val chId = "androidmcp_posted"
         nm.createNotificationChannel(NotificationChannel(chId, "Posted by MCP", NotificationManager.IMPORTANCE_DEFAULT))
@@ -565,7 +599,7 @@ object Mcp {
     }
 
     private fun clipboardWrite(ctx: Context, args: JsonObject): String {
-        val text = args["text"]?.jsonPrimitive?.contentOrNull ?: return "no 'text' argument provided"
+        val text = args["text"]?.jsonPrimitive?.contentOrNull ?: throw ToolArgError("no 'text' argument provided")
         val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
         cm.setPrimaryClip(android.content.ClipData.newPlainText("androidmcp", text))
         return "clipboard set to ${text.length} chars (background writes may be silently restricted on some Android versions)"
@@ -810,7 +844,7 @@ object Mcp {
     // ---- torch ----
     private fun torch(ctx: Context, args: JsonObject): String {
         val on = args["on"]?.jsonPrimitive?.booleanOrNull
-            ?: return "provide 'on': true to switch the light on, false to switch it off"
+            ?: throw ToolArgError("provide 'on': true to switch the light on, false to switch it off")
         val cm = ctx.getSystemService(Context.CAMERA_SERVICE) as? android.hardware.camera2.CameraManager
             ?: return "camera service unavailable"
         val flashId = runCatching {
@@ -904,8 +938,8 @@ object Mcp {
     // ---- launch_url ----
     private fun launchUrl(ctx: android.content.Context, args: kotlinx.serialization.json.JsonObject): String {
         val raw = args["url"]?.jsonPrimitive?.contentOrNull?.trim()
-            ?: return "provide a 'url' to open"
-        if (raw.isEmpty()) return "provide a non-empty 'url' to open"
+            ?: throw ToolArgError("provide a 'url' to open")
+        if (raw.isEmpty()) throw ToolArgError("provide a non-empty 'url' to open")
         // Prepend https:// only when there is no leading URI scheme (scheme://…).
         val hasScheme = Regex("^[a-zA-Z][a-zA-Z0-9+.-]*://").containsMatchIn(raw)
         val normalized = if (hasScheme) raw else "https://$raw"
@@ -928,8 +962,8 @@ object Mcp {
     // ---- dial ----
     private fun dial(ctx: android.content.Context, args: kotlinx.serialization.json.JsonObject): String {
         val number = args["number"]?.jsonPrimitive?.contentOrNull?.trim()
-            ?: return "provide a 'number' to dial"
-        if (number.isEmpty()) return "provide a non-empty 'number' to dial"
+            ?: throw ToolArgError("provide a 'number' to dial")
+        if (number.isEmpty()) throw ToolArgError("provide a non-empty 'number' to dial")
         val uri = android.net.Uri.fromParts("tel", number, null)
         val intent = Intent(Intent.ACTION_DIAL, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         return try {
@@ -1053,7 +1087,7 @@ object Mcp {
     // ---- elevated_input ----
     private fun elevatedInput(ctx: android.content.Context, args: kotlinx.serialization.json.JsonObject): String {
         val action = args["action"]?.jsonPrimitive?.contentOrNull?.trim()?.lowercase()
-            ?: return "provide 'action': tap, swipe, text, or key"
+            ?: throw ToolArgError("provide 'action': tap, swipe, text, or key")
         val x = args["x"]?.jsonPrimitive?.intOrNull
         val y = args["y"]?.jsonPrimitive?.intOrNull
         val x2 = args["x2"]?.jsonPrimitive?.intOrNull
@@ -1090,7 +1124,7 @@ object Mcp {
                 if (!valid) return "invalid keycode '$raw' — use a numeric code (e.g. 4) or a KEYCODE_ name (e.g. KEYCODE_BACK)"
                 "input keyevent $key"
             }
-            else -> return "unknown action '$action' — use tap, swipe, text, or key"
+            else -> throw ToolArgError("unknown action '$action' — use tap, swipe, text, or key")
         }
 
         // 'input' is SILENT on success and prints failures (bad keycode, off-screen coords,
@@ -1126,10 +1160,10 @@ object Mcp {
             "notification" -> android.media.AudioManager.STREAM_NOTIFICATION
             "voice_call" -> android.media.AudioManager.STREAM_VOICE_CALL
             "system" -> android.media.AudioManager.STREAM_SYSTEM
-            else -> return "unknown stream '$streamName' — use music, ring, alarm, notification, voice_call, or system"
+            else -> throw ToolArgError("unknown stream '$streamName' — use music, ring, alarm, notification, voice_call, or system")
         }
         val level = args["level"]?.jsonPrimitive?.intOrNull
-            ?: return "provide an integer 'level'"
+            ?: throw ToolArgError("provide an integer 'level'")
         val showUi = args["show_ui"]?.jsonPrimitive?.booleanOrNull ?: false
         val max = runCatching { am.getStreamMaxVolume(streamConst) }.getOrDefault(-1)
         if (max < 0) return "could not read the max volume for the $streamName stream"
@@ -1156,7 +1190,7 @@ object Mcp {
         val am = ctx.getSystemService(android.content.Context.AUDIO_SERVICE) as? android.media.AudioManager
             ?: return "audio service unavailable"
         val action = args["action"]?.jsonPrimitive?.contentOrNull?.trim()?.lowercase()
-            ?: return "provide an 'action': play, pause, playpause, next, previous, or stop"
+            ?: throw ToolArgError("provide an 'action': play, pause, playpause, next, previous, or stop")
         val keyCode = when (action) {
             "play" -> android.view.KeyEvent.KEYCODE_MEDIA_PLAY
             "pause" -> android.view.KeyEvent.KEYCODE_MEDIA_PAUSE
@@ -1164,7 +1198,7 @@ object Mcp {
             "next" -> android.view.KeyEvent.KEYCODE_MEDIA_NEXT
             "previous" -> android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS
             "stop" -> android.view.KeyEvent.KEYCODE_MEDIA_STOP
-            else -> return "unknown action '$action' — use play, pause, playpause, next, previous, or stop"
+            else -> throw ToolArgError("unknown action '$action' — use play, pause, playpause, next, previous, or stop")
         }
         // dispatchMediaKeyEvent returns void and never reports whether an app consumed the key,
         // so isMusicActive is the only cheap hint about whether a media session is likely present.
@@ -1192,8 +1226,8 @@ object Mcp {
     // ---- toast ----
     private fun toast(ctx: android.content.Context, args: kotlinx.serialization.json.JsonObject): String {
         val text = args["text"]?.jsonPrimitive?.contentOrNull
-            ?: return "provide a 'text' to show"
-        if (text.isEmpty()) return "provide a non-empty 'text' to show"
+            ?: throw ToolArgError("provide a 'text' to show")
+        if (text.isEmpty()) throw ToolArgError("provide a non-empty 'text' to show")
         val long = args["long"]?.jsonPrimitive?.booleanOrNull ?: false
         // Toast.makeText()/show() must run on a thread with a Looper; this runner is on the IO
         // thread, so post to the main looper. Use applicationContext so the toast survives the
@@ -1217,8 +1251,8 @@ object Mcp {
     // ---- share_text ----
     private fun shareText(ctx: android.content.Context, args: kotlinx.serialization.json.JsonObject): String {
         val text = args["text"]?.jsonPrimitive?.contentOrNull
-            ?: return "provide 'text' to share"
-        if (text.isEmpty()) return "provide non-empty 'text' to share"
+            ?: throw ToolArgError("provide 'text' to share")
+        if (text.isEmpty()) throw ToolArgError("provide non-empty 'text' to share")
         val subject = args["subject"]?.jsonPrimitive?.contentOrNull?.trim()?.takeUnless { it.isBlank() }
         val send = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
@@ -1265,8 +1299,8 @@ object Mcp {
             "date" -> android.provider.Settings.ACTION_DATE_SETTINGS
             "security" -> android.provider.Settings.ACTION_SECURITY_SETTINGS
             "home" -> android.provider.Settings.ACTION_HOME_SETTINGS
-            else -> return "unknown screen '$screen' — use one of: wifi, bluetooth, location, " +
-                "display, sound, apps, app_details, battery, date, security, home"
+            else -> throw ToolArgError("unknown screen '$screen' — use one of: wifi, bluetooth, " +
+                "location, display, sound, apps, app_details, battery, date, security, home")
         }
         val intent = Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         if (data != null) intent.data = data
@@ -1289,7 +1323,7 @@ object Mcp {
     // ---- create_calendar_event ----
     private fun createCalendarEvent(ctx: android.content.Context, args: kotlinx.serialization.json.JsonObject): String {
         val title = args["title"]?.jsonPrimitive?.contentOrNull?.trim()?.takeUnless { it.isBlank() }
-            ?: return "provide a non-empty 'title' for the event"
+            ?: throw ToolArgError("provide a non-empty 'title' for the event")
         // Epoch millis (~1.7e12) overflow a 32-bit Int, so read start as Long even though the schema
         // type is "integer" (MCP has no separate long type). intOrNull would silently return null here.
         val start = args["start_epoch_ms"]?.jsonPrimitive?.longOrNull
@@ -1418,14 +1452,14 @@ object Mcp {
     // ---- elevated_settings ----
     private fun elevatedSettings(ctx: android.content.Context, args: kotlinx.serialization.json.JsonObject): String {
         val action = args["action"]?.jsonPrimitive?.contentOrNull?.trim()?.lowercase()
-            ?: return "provide 'action': get or put"
+            ?: throw ToolArgError("provide 'action': get or put")
         val ns = args["namespace"]?.jsonPrimitive?.contentOrNull?.trim()?.lowercase()
-            ?: return "provide 'namespace': system, secure, or global"
+            ?: throw ToolArgError("provide 'namespace': system, secure, or global")
         if (ns != "system" && ns != "secure" && ns != "global")
             return "invalid namespace '$ns' — use system, secure, or global"
         val key = args["key"]?.jsonPrimitive?.contentOrNull?.trim()
-            ?: return "provide a 'key'"
-        if (key.isEmpty()) return "provide a non-empty 'key'"
+            ?: throw ToolArgError("provide a 'key'")
+        if (key.isEmpty()) throw ToolArgError("provide a non-empty 'key'")
 
         // Elevated.exec wraps the whole string in `sh -c`, so single-quote every token that
         // carries user data to pass it verbatim (no word-splitting, no subshells).
@@ -1463,7 +1497,7 @@ object Mcp {
             }
             "put" -> {
                 val value = args["value"]?.jsonPrimitive?.contentOrNull
-                    ?: return "put needs a 'value'"
+                    ?: throw ToolArgError("put needs a 'value'")
                 val cmd = "settings put $ns ${sq(key)} ${sq(value)}"
                 val (rc, out) = runRc(cmd)
                 // Read the value back so the caller sees the effective, stored result.
@@ -1501,13 +1535,13 @@ object Mcp {
     }
 
     private fun rootShell(args: JsonObject): String {
-        val cmd = args["command"]?.jsonPrimitive?.contentOrNull ?: return "provide a 'command' to run"
+        val cmd = args["command"]?.jsonPrimitive?.contentOrNull ?: throw ToolArgError("provide a 'command' to run")
         return Elevated.exec(cmd).ifBlank { "(no output)" }.take(20000)
     }
 
     private fun runShortcut(ctx: Context, args: JsonObject): String {
         val pkg = args["package"]?.jsonPrimitive?.contentOrNull
-            ?: return "provide a 'package' to launch (e.g. com.android.settings)"
+            ?: throw ToolArgError("provide a 'package' to launch (e.g. com.android.settings)")
         val intent = ctx.packageManager.getLaunchIntentForPackage(pkg)
             ?: return "app not installed or not launchable: $pkg"
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
