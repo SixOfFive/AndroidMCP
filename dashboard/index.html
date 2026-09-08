@@ -243,7 +243,6 @@ function loadConns(){
 function clearConnTimers(id){
   Object.keys(timers).forEach(k => { if (k.startsWith(id+":")) { clearInterval(timers[k]); delete timers[k]; } });
 }
-function clearAllTimers(){ Object.keys(timers).forEach(k => { clearInterval(timers[k]); delete timers[k]; }); }
 
 // ---------- JSON-RPC (per connection) ----------
 async function rpc(conn, method, params){
@@ -266,8 +265,9 @@ async function rpc(conn, method, params){
 
 // ---------- connect / disconnect (per connection) ----------
 async function connect(conn){
-  if (!conn.base || !conn.token) { conn.status="error"; conn.err="Enter both a URL and a token."; renderTabs(); renderConnbar(); return; }
+  if (!conn.base || !conn.token) { conn.status="error"; conn.err="Enter both a URL and a token."; renderTabs(); renderConnbar(); showActive(); return; }
   saveConns();
+  unmountConn(conn); // drop any prior page so a reconnect rebuilds against fresh tools
   conn.status="off"; conn.err="Connecting…"; renderTabs(); renderConnbar();
   try {
     conn.serverInfo = await rpc(conn, "initialize", { protocolVersion:"2025-06-18", capabilities:{}, clientInfo:{ name:"androidmcp-console", version:"1.0" } });
@@ -282,18 +282,17 @@ async function connect(conn){
   } catch (e) {
     conn.status="error"; conn.err=e.message; conn.tools=[]; conn.serverInfo=null;
   }
-  renderTabs(); renderConnbar();
-  if (conn.id===activeId) { buildNav(); render(); }
+  if (conn.status==="online") mountConn(conn);
+  renderTabs(); renderConnbar(); showActive();
 }
 function disconnect(conn){
-  clearConnTimers(conn.id);
+  unmountConn(conn);
   conn.status="off"; conn.err="Disconnected."; conn.tools=[]; conn.serverInfo=null;
-  renderTabs(); renderConnbar();
-  if (conn.id===activeId) { buildNav(); render(); }
+  renderTabs(); renderConnbar(); showActive();
 }
 function removeConn(id){
   const conn = CONNS.find(c=>c.id===id); if (!conn) return;
-  clearConnTimers(id);
+  unmountConn(conn);
   CONNS = CONNS.filter(c=>c.id!==id);
   if (!CONNS.length) CONNS = [ newConn("server 1","","") ];
   if (activeId===id) activeId = CONNS[0].id;
@@ -336,42 +335,66 @@ function renderConnbar(){
   bar.appendChild(status);
 }
 
-// ---------- nav + page (for the active connection) ----------
-function toolsIn(cat){ const c=activeConn(); return c ? c.tools.filter(t=>t.cat===cat) : []; }
+// ---------- nav + page ----------
+// Every connection's cards are built ONCE (all sub-pages) and kept in the DOM; navigating
+// between sub-pages or connections only shows/hides them. So inputs, poll toggles and results
+// are never lost — the original battery reading is still there when you switch back.
+function toolsIn(conn, cat){ return conn ? conn.tools.filter(t=>t.cat===cat) : []; }
+
 function buildNav(){
   const nav = $("#nav"); nav.innerHTML="";
   const c = activeConn();
   if (!c || c.status!=="online") return;
   nav.appendChild(el("div",{class:"nav-sep",text:"Sub-pages"}));
   for (const cat of CATS) {
-    const n = toolsIn(cat.id).length;
+    const n = toolsIn(c, cat.id).length;
     if (cat.id!=="overview" && n===0) continue;
     const item = el("div",{class:"navitem"+(cat.id===c.subpage?" active":"")}, [
       el("span",{text:cat.label}), el("span",{class:"count",text: cat.id==="overview" ? "" : String(n)}),
     ]);
-    item.onclick = () => { c.subpage=cat.id; buildNav(); render(); };
+    item.onclick = () => { c.subpage=cat.id; showActive(); };
     nav.appendChild(item);
   }
 }
 
-function render(){
-  clearAllTimers(); // cards are about to be rebuilt; drop any polling intervals bound to old DOM
-  const page = $("#page"); page.innerHTML="";
-  const c = activeConn();
-  if (!c || c.status!=="online") {
-    page.appendChild(el("div",{class:"empty",html:
-      (c && c.status==="error" ? `<span style="color:var(--danger)">${escapeHtml(c.err)}</span><br><br>` : "") +
-      "Not connected. In the app: turn the server <b>ON</b>, pick a bind (loopback / lan / tailscale), mint a token, and enable <b>Allow browser dashboard</b>. Then fill this connection's URL + token above and press <b>Connect</b>.<br><br>Use the tabs up top to keep <b>more than one device</b> connected at once."}));
-    return;
+// Build a connection's whole page (all sub-pages + cards) once, hidden, appended to #page.
+function mountConn(conn){
+  if (conn.pageEl) return;
+  const wrap = el("div",{class:"conn-pages"}); wrap.style.display="none";
+  conn.subEls = {};
+  for (const cat of CATS) {
+    const list = toolsIn(conn, cat.id);
+    if (cat.id!=="overview" && list.length===0) continue;
+    const sub = el("div"); sub.style.display="none";
+    sub.appendChild(el("div",{class:"page-head"},[ el("h1",{text:cat.label}), el("p",{text: CAT_BLURB[cat.id]||""}) ]));
+    if (cat.id==="overview") sub.appendChild(overviewPanel(conn));
+    if (list.length) { const grid=el("div",{class:"grid"}); list.forEach(t=>grid.appendChild(toolCard(conn,t))); sub.appendChild(grid); }
+    else if (cat.id!=="overview") sub.appendChild(el("div",{class:"empty",text:"No tools in this section."}));
+    conn.subEls[cat.id]=sub; wrap.appendChild(sub);
   }
-  const cat = CATS.find(x=>x.id===c.subpage) || CATS[0];
-  page.appendChild(el("div",{class:"page-head"},[ el("h1",{text:cat.label}), el("p",{text: CAT_BLURB[cat.id]||""}) ]));
-  if (cat.id==="overview") page.appendChild(overviewPanel(c));
-  const grid = el("div",{class:"grid"});
-  const list = toolsIn(cat.id);
-  if (list.length===0 && cat.id!=="overview") { page.appendChild(el("div",{class:"empty",text:"No tools in this section."})); return; }
-  list.forEach(t => grid.appendChild(toolCard(c, t)));
-  page.appendChild(grid);
+  conn.pageEl = wrap;
+  $("#page").appendChild(wrap);
+}
+function unmountConn(conn){
+  clearConnTimers(conn.id);
+  if (conn.pageEl) { conn.pageEl.remove(); conn.pageEl=null; conn.subEls=null; }
+}
+
+// Show the active connection's active sub-page; hide every other page/sub-page (no rebuilding).
+function showActive(){
+  const page = $("#page");
+  const c = activeConn();
+  CONNS.forEach(cn => { if (cn.pageEl) cn.pageEl.style.display = (cn===c ? "block" : "none"); });
+  let ph = $("#placeholder");
+  if (!c || c.status!=="online") {
+    if (!ph) { ph = el("div",{id:"placeholder"}); page.appendChild(ph); }
+    ph.style.display="block"; ph.innerHTML="";
+    ph.appendChild(el("div",{class:"empty",html:
+      (c && c.status==="error" ? `<span style="color:var(--danger)">${escapeHtml(c.err)}</span><br><br>` : "") +
+      "Not connected. In the app: turn the server <b>ON</b>, pick a bind, mint a token, and enable <b>Allow browser dashboard</b>. Then fill this connection's URL + token above and press <b>Connect</b>.<br><br>Use the tabs up top to keep <b>more than one device</b> connected at once."}));
+  } else if (ph) { ph.style.display="none"; }
+  if (c && c.subEls) Object.entries(c.subEls).forEach(([cat,sub]) => sub.style.display = (cat===c.subpage ? "block":"none"));
+  buildNav();
 }
 
 function overviewPanel(c){
@@ -508,7 +531,7 @@ function whyText(desc){
 }
 function escapeHtml(s){ return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 
-function renderAll(){ renderTabs(); renderConnbar(); buildNav(); render(); }
+function renderAll(){ renderTabs(); renderConnbar(); showActive(); }
 
 // ---------- boot ----------
 (function boot(){ loadConns(); renderAll(); })();
