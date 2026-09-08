@@ -24,6 +24,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -235,6 +236,42 @@ private fun ServerScreen() {
                             )
                         }
                         Switch(checked = config.allowBrowser, onCheckedChange = { ConfigStore.setAllowBrowser(it) })
+                    }
+                    // Origin allowlist. Turning the dashboard on used to admit ANY browser origin
+                    // (CORS simply echoed whatever the caller sent), so the DNS-rebinding guard
+                    // went silent exactly when it was in use.
+                    if (config.allowBrowser) {
+                        Text(
+                            "Allowed origins — pages on localhost / 127.0.0.1 and a local file:// " +
+                                "dashboard (Origin \"null\") are always accepted. Add any other page " +
+                                "you want to allow; everything else is refused with 403.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        var newOrigin by remember { mutableStateOf("") }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedTextField(
+                                value = newOrigin,
+                                onValueChange = { newOrigin = it },
+                                singleLine = true,
+                                label = { Text("https://example.com") },
+                                modifier = Modifier.weight(1f),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            TextButton(
+                                enabled = newOrigin.isNotBlank(),
+                                onClick = {
+                                    ConfigStore.addAllowedOrigin(newOrigin.trim().trimEnd('/'))
+                                    newOrigin = ""
+                                },
+                            ) { Text("Add") }
+                        }
+                        config.allowedOrigins.sorted().forEach { o ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(o, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                                TextButton(onClick = { ConfigStore.removeAllowedOrigin(o) }) { Text("Remove") }
+                            }
+                        }
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {

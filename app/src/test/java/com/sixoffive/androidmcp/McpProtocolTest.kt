@@ -6,6 +6,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Test
@@ -140,11 +141,14 @@ class McpProtocolTest {
         val result = bodyOf(call("""{"jsonrpc":"2.0","id":1,"method":"initialize"}"""))["result"]!!.jsonObject
         val caps = result["capabilities"]!!.jsonObject
         assertTrue("tools" in caps)
-        // No SSE stream exists (GET /mcp is a 405), so listChanged would be a false promise, and
-        // there is no resources/prompts/logging implementation to advertise.
+        // `resources` is declared now that resources/read serves the resource_link media.
+        assertTrue("resources" in caps)
+        // No SSE stream exists (GET /mcp is a 405), so listChanged would be a false promise on
+        // either, and there is still no prompts/logging implementation to advertise.
         assertFalse("listChanged" in caps["tools"]!!.jsonObject)
-        assertFalse("resources" in caps)
+        assertFalse("listChanged" in caps["resources"]!!.jsonObject)
         assertFalse("prompts" in caps)
+        assertFalse("logging" in caps)
         val info = result["serverInfo"]!!.jsonObject
         assertEquals("androidmcp", info["name"]!!.jsonPrimitive.content)
         assertNotNull(info["title"])
@@ -156,7 +160,9 @@ class McpProtocolTest {
 
     @Test
     fun `unknown method with an id is method-not-found`() {
-        assertEquals(-32601, errorCode(call("""{"jsonrpc":"2.0","id":1,"method":"resources/read"}""")))
+        // resources/read is implemented now, so pick a method this server genuinely lacks.
+        assertEquals(-32601, errorCode(call("""{"jsonrpc":"2.0","id":1,"method":"prompts/list"}""")))
+        assertEquals(-32601, errorCode(call("""{"jsonrpc":"2.0","id":1,"method":"completion/complete"}""")))
     }
 
     @Test
@@ -196,6 +202,73 @@ class McpProtocolTest {
         assertEquals(-32602, errorCode(call(
             """{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"torch","arguments":"on"}}"""
         )))
+    }
+
+    // ---- resources (so resource_link media is dereferenceable through the protocol) ----
+
+    @Test
+    fun `the resources capability is declared`() {
+        val caps = bodyOf(call("""{"jsonrpc":"2.0","id":1,"method":"initialize"}"""))["result"]!!
+            .jsonObject["capabilities"]!!.jsonObject
+        assertTrue("resources" in caps, "resource_link is emitted, so resources must be declared")
+        // Still no listChanged on either: GET /mcp is a 405, so there is no channel to push it on.
+        assertFalse("listChanged" in caps["resources"]!!.jsonObject)
+    }
+
+    @Test
+    fun `resources_list is empty — media is transient, not enumerable`() {
+        val r = bodyOf(call("""{"jsonrpc":"2.0","id":1,"method":"resources/list"}"""))
+        assertEquals(0, r["result"]!!.jsonObject["resources"]!!.jsonArray.size)
+    }
+
+    @Test
+    fun `resources_read rejects a URI this server did not mint`() {
+        for (uri in listOf("file:///etc/passwd", "http://evil.example/x", "http://h/media/abc")) {
+            val r = call("""{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"$uri"}}""")
+            assertEquals(-32602, errorCode(r), "should refuse $uri")
+        }
+    }
+
+    @Test
+    fun `resources_read on an expired or already-fetched link is -32002`() {
+        // -32002 is the spec's "resource not found"; single-use consumption and TTL expiry both
+        // land here, and the message says which so a client does not retry forever.
+        val r = call("""{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"http://h:1/media/deadbeef?k=nope"}}""")
+        assertEquals(-32002, errorCode(r))
+    }
+
+    @Test
+    fun `resources_read returns the blob for a live link, exactly once`() {
+        val (mid, nonce) = com.sixoffive.androidmcp.server.MediaStore.put("PHOTOBYTES".toByteArray(), "image/jpeg")
+        val uri = "http://192.168.1.5:8765/media/$mid?k=$nonce"
+        val ok = bodyOf(call("""{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"$uri"}}"""))
+        val c = ok["result"]!!.jsonObject["contents"]!!.jsonArray[0].jsonObject
+        assertEquals(uri, c["uri"]!!.jsonPrimitive.content)
+        assertEquals("image/jpeg", c["mimeType"]!!.jsonPrimitive.content)
+        assertEquals("PHOTOBYTES", String(java.util.Base64.getDecoder().decode(c["blob"]!!.jsonPrimitive.content)))
+        // Single-use: reading through the protocol consumes the same entry the HTTP route serves.
+        assertEquals(-32002, errorCode(call("""{"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":"$uri"}}""")))
+    }
+
+    @Test
+    fun `media URI parsing accepts only this server's link shape`() {
+        val P = com.sixoffive.androidmcp.server.Mcp::parseMediaUri
+        assertNotNull(P("http://h:8765/media/abc?k=xyz"))
+        assertEquals("abc" to "xyz", P("https://1.2.3.4:8765/media/abc?k=xyz"))
+        assertNull(P("http://h:8765/media/abc"))            // no nonce
+        assertNull(P("http://h:8765/media/abc?j=xyz"))      // wrong param
+        assertNull(P("http://h:8765/other/abc?k=xyz"))      // wrong path
+        assertNull(P("http://h:8765/media/a/b?k=xyz"))      // id must be one segment
+    }
+
+    // ---- cancellation ----
+
+    @Test
+    fun `notifications_cancelled is still never answered`() {
+        // It now has a side effect (withdrawing a pending approval), which must not turn it into
+        // something the server replies to.
+        assertIs<Mcp.Reply.None>(call("""{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":"7"}}"""))
+        assertIs<Mcp.Reply.None>(call("""{"jsonrpc":"2.0","method":"notifications/cancelled"}"""))
     }
 
     @Test

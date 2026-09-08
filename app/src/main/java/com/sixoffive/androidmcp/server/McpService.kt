@@ -121,6 +121,11 @@ class McpService : Service() {
             running.value = true
             val scheme = if (cfg.tls) "https" else "http"
             boundInfo.value = "${Net.reachableHost(cfg.bind)}:$port"
+            // Snapshot what the listener ACTUALLY bound. Media links used to be built from
+            // ConfigStore.current at mint time, but the bind/TLS toggles can be changed without
+            // restarting the server — so flipping to "lan" without a restart produced a LAN URL
+            // that the still-loopback listener would refuse.
+            boundBase.value = "$scheme://${Net.reachableHost(cfg.bind)}:$port"
             AuditLog.record("server", "local", true, "started $scheme on $host:$port")
             notify("listening on $scheme://${boundInfo.value}")
         } catch (t: Throwable) {
@@ -135,6 +140,7 @@ class McpService : Service() {
         engine = null
         running.value = false
         boundInfo.value = ""
+        boundBase.value = ""
         super.onDestroy()
     }
 
@@ -157,6 +163,9 @@ class McpService : Service() {
 
         val running = MutableStateFlow(false)
         val boundInfo = MutableStateFlow("")
+
+        /** Scheme://host:port the listener actually bound, for building fetchable media URLs. */
+        val boundBase = MutableStateFlow("")
 
         fun ensureChannel(ctx: Context) {
             val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -194,7 +203,8 @@ internal fun Application.installRoutes(handle: suspend (body: String, client: St
         // CORS preflight — only honoured when the browser dashboard is opted in.
         options("/mcp") {
             val origin = call.request.headers["Origin"]
-            if (origin != null && ConfigStore.current.allowBrowser) {
+            val cfg = ConfigStore.current
+            if (origin != null && AccessControl.originAllowed(origin, cfg.allowBrowser, cfg.allowedOrigins)) {
                 applyCors(call, origin)
                 call.respondText("", status = HttpStatusCode.NoContent)
             } else {
@@ -203,17 +213,19 @@ internal fun Application.installRoutes(handle: suspend (body: String, client: St
         }
         post("/mcp") {
             val origin = call.request.headers["Origin"]
-            // Browsers send Origin; native MCP clients don't. DNS-rebinding guard: reject any
-            // browser origin UNLESS the user turned on "Allow browser dashboard". The bearer
-            // token below is always required regardless, so a drive-by page can't act.
-            if (origin != null) {
-                if (!ConfigStore.current.allowBrowser) {
-                    call.respondText("forbidden origin", status = HttpStatusCode.Forbidden); return@post
-                }
-                applyCors(call, origin)
+            val cfg = ConfigStore.current
+            // Browsers send Origin; native MCP clients don't. DNS-rebinding guard: an origin must
+            // be on the allowlist (or a local default) even when the dashboard is opted in — the
+            // old rule was a single global boolean plus reflect-anything CORS, which made the
+            // spec's Origin check a no-op exactly when the feature it guards was in use.
+            if (!AccessControl.originAllowed(origin, cfg.allowBrowser, cfg.allowedOrigins)) {
+                if (rejected(call, "origin", "forbidden origin: $origin")) return@post
+                call.respondText("forbidden origin", status = HttpStatusCode.Forbidden); return@post
             }
+            if (origin != null) applyCors(call, origin)
             val client = authenticate(call)
             if (client == null) {
+                if (rejected(call, "auth", "unauthorized")) return@post
                 // Name the scheme so a client knows *how* to authenticate. Deliberately no
                 // `resource_metadata`: there is no authorization server, and advertising one
                 // sends clients down an OAuth discovery path that leads nowhere.
@@ -263,10 +275,12 @@ internal fun Application.installRoutes(handle: suspend (body: String, client: St
         // this id (a capability URL) — no bearer token in the URL, single-use, TTL-expiring.
         get("/media/{id}") {
             val origin = call.request.headers["Origin"]
-            if (origin != null) {
-                if (!ConfigStore.current.allowBrowser) { call.respondText("forbidden origin", status = HttpStatusCode.Forbidden); return@get }
-                applyCors(call, origin)
+            val cfg = ConfigStore.current
+            if (!AccessControl.originAllowed(origin, cfg.allowBrowser, cfg.allowedOrigins)) {
+                if (rejected(call, "origin", "forbidden origin on /media: $origin")) return@get
+                call.respondText("forbidden origin", status = HttpStatusCode.Forbidden); return@get
             }
+            if (origin != null) applyCors(call, origin)
             val id = call.parameters["id"] ?: return@get call.respondText("not found", status = HttpStatusCode.NotFound)
             val nonce = call.request.queryParameters["k"] ?: ""
             val e = MediaStore.take(id, nonce)
@@ -278,6 +292,27 @@ internal fun Application.installRoutes(handle: suspend (body: String, client: St
             call.respondBytes(e.bytes, ContentType.parse(e.mime))
         }
     }
+}
+
+/**
+ * Record a rejected request and decide whether to throttle the caller.
+ *
+ * Neither the 401 nor the Origin 403 used to write anything: `AuditLog.record` appeared only on
+ * the tool path, so a `lan` bind could be probed indefinitely leaving no trace in the log the UI
+ * presents as the trust record. Returns true when the caller has been answered with a 429 and the
+ * route should stop.
+ */
+private suspend fun rejected(call: ApplicationCall, kind: String, detail: String): Boolean {
+    val host = call.request.local.remoteHost
+    val r = AccessControl.recordRejection(host, detail)
+    // One line per host per minute, carrying the count it stands for, so a patient prober cannot
+    // scroll a real event out of the 200-entry ring.
+    r.logLine?.let { AuditLog.record("rejected:$kind", host, false, it) }
+    if (r.throttle) {
+        call.response.headers.append("Retry-After", "60")
+        call.respondText("too many rejected requests", status = HttpStatusCode.TooManyRequests)
+    }
+    return r.throttle
 }
 
 /**

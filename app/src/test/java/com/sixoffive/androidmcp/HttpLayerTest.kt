@@ -115,7 +115,7 @@ class HttpLayerTest {
     }
 
     @Test
-    fun `with the dashboard opted in, a browser Origin is allowed and echoed`() {
+    fun `with the dashboard opted in, an allowed browser Origin is echoed`() {
         ConfigStore.state.value = AppConfig(allowBrowser = true)
         app { c ->
             val r = c.post("/mcp") {
@@ -130,13 +130,16 @@ class HttpLayerTest {
     }
 
     @Test
-    fun `preflight is refused while the dashboard is off and honoured when on`() {
-        app { c -> assertEquals(HttpStatusCode.Forbidden, c.options("/mcp") { header("Origin", "http://x") }.status) }
+    fun `preflight is refused while the dashboard is off and honoured for an allowed origin`() {
+        val local = "http://localhost:3000"
+        app { c -> assertEquals(HttpStatusCode.Forbidden, c.options("/mcp") { header("Origin", local) }.status) }
         ConfigStore.state.value = AppConfig(allowBrowser = true)
         app { c ->
-            val r = c.options("/mcp") { header("Origin", "http://x") }
+            val r = c.options("/mcp") { header("Origin", local) }
             assertEquals(HttpStatusCode.NoContent, r.status)
             assertTrue(r.headers["Access-Control-Allow-Headers"]!!.contains("mcp-protocol-version"))
+            // ...but an arbitrary origin is still refused even with the dashboard on.
+            assertEquals(HttpStatusCode.Forbidden, c.options("/mcp") { header("Origin", "https://evil.example") }.status)
         }
     }
 

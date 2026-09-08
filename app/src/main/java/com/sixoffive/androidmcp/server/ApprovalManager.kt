@@ -22,9 +22,21 @@ import java.util.concurrent.atomic.AtomicInteger
 object ApprovalManager {
     const val CHANNEL = "androidmcp_approvals"
     const val ACTION = "com.sixoffive.androidmcp.APPROVE"
-    const val TIMEOUT_MS = 60_000L
+    /**
+     * How long to wait for the human before refusing.
+     *
+     * Deliberately BELOW the 60 s default request timeout of the reference MCP SDKs. At exactly
+     * 60 s the client's clock starts first, so the ordinary "phone in a pocket" case surfaced as
+     * an opaque transport timeout instead of the structured `approvalRefusal` this app builds —
+     * the client gave up a beat before the server could explain itself. Shortening the window
+     * makes the *explained* deny path fire more often, not fewer approvals succeed.
+     */
+    const val TIMEOUT_MS = 25_000L
 
     private val pending = ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
+
+    /** JSON-RPC request id -> internal approval id, so `notifications/cancelled` can cancel one. */
+    private val byRpcId = ConcurrentHashMap<String, String>()
     private val armedUntil = ConcurrentHashMap<String, Long>()
     private val counter = AtomicInteger(1000)
 
@@ -33,20 +45,38 @@ object ApprovalManager {
     fun disarm(capId: String) { armedUntil.remove(capId) }
 
     /** True if the call may proceed. Blocks on the human for high-impact, un-armed tools. */
-    suspend fun require(ctx: Context, cap: CapabilityMeta, client: String): Boolean {
+    suspend fun require(ctx: Context, cap: CapabilityMeta, client: String, rpcId: String? = null): Boolean {
         if (!cap.highImpact) return true
         if (isArmed(cap.id)) return true
         val id = "req-${counter.incrementAndGet()}"
         val deferred = CompletableDeferred<Boolean>()
         pending[id] = deferred
+        rpcId?.let { byRpcId[it] = id }
         postPrompt(ctx, id, cap, client)
-        val ok = withTimeoutOrNull(TIMEOUT_MS) { deferred.await() } ?: false
-        pending.remove(id)
-        nm(ctx).cancel(notifId(id))
-        return ok
+        return try {
+            withTimeoutOrNull(TIMEOUT_MS) { deferred.await() } ?: false
+        } finally {
+            // `finally`, because the cleanup used to be skipped whenever the coroutine was
+            // cancelled — leaving a live consent prompt orphaned in the notification shade for a
+            // request nobody is waiting on any more.
+            pending.remove(id)
+            rpcId?.let { byRpcId.remove(it) }
+            nm(ctx).cancel(notifId(id))
+        }
     }
 
     fun resolve(id: String, allow: Boolean) { pending.remove(id)?.complete(allow) }
+
+    /**
+     * The client withdrew the request (`notifications/cancelled`). Deny the pending approval so
+     * the tool never runs — otherwise a late "Allow" tap could still fire the camera for a call
+     * the client abandoned minutes ago.
+     */
+    fun cancelByRpcId(rpcId: String): Boolean {
+        val internal = byRpcId.remove(rpcId) ?: return false
+        pending.remove(internal)?.complete(false)
+        return true
+    }
 
     private fun nm(ctx: Context) = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     private fun notifId(id: String) = id.hashCode()

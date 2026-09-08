@@ -19,7 +19,7 @@ connect at all are the server switch and a client token.
 > capabilities, the double gate, per-call approval, token auth, the config UI, and the
 > installer are built and tested on real hardware (a Samsung Galaxy A03s and a Unisoc tablet),
 > including live cross-machine connections over **LAN** and **Tailscale**. The JSON-RPC and
-> HTTP layers are covered by **76 JVM unit tests**. **Verified end-to-end with the official MCP
+> HTTP layers are covered by **96 JVM unit tests**. **Verified end-to-end with the official MCP
 > Python SDK.** See [Caveats](#caveats).
 
 ---
@@ -313,7 +313,7 @@ tailnet-connected machine rather than exposing it publicly.
 ## Caveats
 
 The v1 roadmap is done and the transport has since been pinned to the MCP spec and covered
-by **76 JVM unit tests** (`./gradlew :app:testDebugUnitTest`). Remaining rough edges:
+by **96 JVM unit tests** (`./gradlew :app:testDebugUnitTest`). Remaining rough edges:
 
 - **Only one real client has connected.** The official MCP Python SDK 2.2.0 drives it end to end,
   but Claude Code, Claude Desktop and the MCP Inspector have not been tried.
@@ -322,10 +322,9 @@ by **76 JVM unit tests** (`./gradlew :app:testDebugUnitTest`). Remaining rough e
   Node-based clients have no pinning knob and need the cert as a trusted CA instead.
 - **The server implements protocol revision `2025-06-18` only.** An unsupported
   `MCP-Protocol-Version` header is answered with a 400 naming what is supported.
-- **`resource_link` media is fetched over plain HTTP**, not `resources/read` — the server
-  declares no `resources` capability, so a client that only dereferences resource links through
-  the protocol cannot resolve them. Media bytes live in memory with a 10-minute TTL and are
-  consumed on first fetch.
+- **`resource_link` media is served both ways** — through `resources/read` and as a plain HTTP GET
+  on the link. Bytes live in memory with a 10-minute TTL and are consumed on first fetch by either
+  path.
 - **No SSE stream** (`GET /mcp` returns 405, which the spec permits), so there is no channel for
   `tools/list_changed` — tool descriptions are deliberately static and live state comes from
   `list_capabilities`.
@@ -390,7 +389,7 @@ The v1 list below was fully checked off; this is its successor.
       `limit:-1` made a full inbox report "no messages" and made `read_notifications` throw;
       `set_volume` rejected the `voice_call` stream that `volume_info` advertises; `take_photo`
       echoed a camera it had not used; `post_notification` silently posted `"(no text)"`.
-- [x] **76 JVM unit tests** — the first in the project. Protocol conformance, the HTTP layer
+- [x] **96 JVM unit tests** — the first in the project. Protocol conformance, the HTTP layer
       (auth, DNS-rebinding guard, CORS, version header, body cap, media nonce), SAF containment,
       TLS cert properties, registry invariants, and schema quality gates. `installRoutes` takes
       the handler as a lambda so the whole HTTP layer runs under `testApplication` with no device.
@@ -412,17 +411,50 @@ The v1 list below was fully checked off; this is its successor.
       help. Now derived from the reason code: `hardware` / `elevated_access` / `special_access` /
       `app_toggle` / `os_permission`. Verified on the K70 across all three.
 
+- [x] **`resources/list` + `resources/read`.** `resource_link` media is now dereferenceable
+      through the protocol, not only over plain HTTP: the server declares the `resources`
+      capability and serves the links it minted. Verified on the K70 end to end — a real
+      `take_photo` returned a link, `resources/read` returned the identical 310,936 bytes as
+      base64, and the second read answered `-32002` because the entry is single-use (the HTTP
+      route 404s too — both paths consume the same entry). `resources/list` is legitimately empty:
+      media is transient and per-call, not enumerable.
+- [x] **Origin allowlist.** Turning the dashboard on used to admit *any* browser origin — CORS
+      simply echoed whatever was sent, so the DNS-rebinding guard went silent exactly when it was
+      in use. Measured on the live server before the change: `Origin: https://evil.example` passed
+      the guard and failed only at auth. Now `localhost` / `127.0.0.1` / `[::1]` / a `file://`
+      dashboard (`Origin: null`) are accepted by default, anything else must be added in the app,
+      and the rest are refused. Verified live: `evil.example` → **403**, `localhost:3000` → 200,
+      `null` → 200.
+- [x] **Rejected connections are audited and rate-limited.** Neither a 401 nor an Origin 403 wrote
+      anything, so a `lan` bind could be probed indefinitely leaving no trace. Now a per-remote-host
+      token bucket (burst 20, refill 10/min, **failures only**, so a busy legitimate client cannot
+      throttle itself) answers 429 with `Retry-After`, and audit lines are **coalesced to one per
+      host per minute** carrying the count they stand for — logging every rejection would still
+      have let a patient prober walk the 200-entry ring clean in about twenty minutes. Verified on
+      the K70: 20 × 401 then 429s, a valid token still 200, and 25 rejections producing exactly
+      **one** audit line.
+- [x] **Approval no longer races the client's timeout.** `TIMEOUT_MS` was 60 s — exactly the
+      reference SDKs' default request timeout, with the client's clock starting first, so "phone in
+      a pocket" surfaced as an opaque transport timeout instead of the structured refusal this app
+      builds. Now 25 s. `notifications/cancelled` withdraws a pending approval (keyed by JSON-RPC
+      request id) so a late "Allow" tap cannot fire the camera for an abandoned call, and cleanup
+      moved into a `finally` so cancellation no longer orphans a live consent prompt in the shade.
+- [x] **Media links are built from the config the listener actually bound**, not live config —
+      bind and TLS can be toggled without restarting the server, which produced links pointing at
+      an address the running listener never bound.
+
 **Open:**
-- [ ] **`resources/list` + `resources/read`** so `resource_link` media is dereferenceable through
-      the protocol rather than only over plain HTTP.
-- [ ] **Origin allowlist** instead of reflecting any browser Origin when the dashboard is opted in.
-- [ ] **Log and rate-limit rejected connections** — neither a 401 nor an Origin 403 currently
-      writes an audit entry, so probing a `lan` bind leaves no trace in the log the UI presents
-      as the trust record.
-- [ ] **Approval timeout races the client's.** `TIMEOUT_MS` is 60 s, exactly the reference SDK's
-      request timeout, and the client's clock starts first — so "phone in a pocket" surfaces as an
-      opaque transport timeout instead of the structured refusal.
-- [ ] **Media links are built from live config, not the config the listener actually bound.**
+
+- [ ] **Only one real client has driven it.** Claude Code, Claude Desktop and the MCP Inspector
+      have not been tried.
+- [ ] **`outputSchema` + `structuredContent` on success.** Tools return prose a model must parse.
+      Declaring an `outputSchema` puts the server in breach of a MUST on every call that does not
+      then return conforming structured output, so it is all-or-nothing per tool.
+- [ ] **No SSE stream** (`GET /mcp` is a 405, which the spec permits), so there is no channel for
+      `tools/list_changed` or progress notifications.
+- [ ] **Re-test the browser dashboard against the Origin allowlist.** A `file://` page sends
+      `Origin: null` and still works, but a dashboard served over http from a non-local origin now
+      has to be added in the app.
 
 ### v1 — feature completeness *(done)*
 

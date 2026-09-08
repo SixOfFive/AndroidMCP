@@ -31,6 +31,9 @@ data class AppConfig(
     val startOnBoot: Boolean = false, // UI intent: user wants auto-start on boot/launch (armed only by Save)
     val bootArmed: Boolean = false, // committed by "Save": the boot receiver + launch-resume act ONLY on this
     val expandedCategories: Set<String> = emptySet(), // which capability-list sections are expanded (UI state)
+    // Browser Origins permitted when allowBrowser is on. Empty = the built-in safe defaults only
+    // (localhost / 127.0.0.1 on any port, and the literal "null" a file:// page sends).
+    val allowedOrigins: Set<String> = emptySet(),
 )
 
 /** Single observable source of truth for toggles + server settings. */
@@ -49,6 +52,7 @@ object ConfigStore {
     private val KEY_START_ON_BOOT = booleanPreferencesKey("start_on_boot")
     private val KEY_BOOT_ARMED = booleanPreferencesKey("boot_armed")
     private val KEY_EXPANDED_CATS = stringSetPreferencesKey("expanded_categories")
+    private val KEY_ALLOWED_ORIGINS = stringSetPreferencesKey("allowed_origins")
 
     val state = MutableStateFlow(AppConfig())
 
@@ -65,6 +69,7 @@ object ConfigStore {
             startOnBoot = p[KEY_START_ON_BOOT] ?: false,
             bootArmed = p[KEY_BOOT_ARMED] ?: false,
             expandedCategories = p[KEY_EXPANDED_CATS] ?: emptySet(),
+            allowedOrigins = p[KEY_ALLOWED_ORIGINS] ?: emptySet(),
         )
     }
 
@@ -111,6 +116,14 @@ object ConfigStore {
             if (expanded) set.add(id) else set.remove(id)
             p[KEY_EXPANDED_CATS] = set
         }
+    }
+
+    fun addAllowedOrigin(origin: String) = scope.launch {
+        app.configDataStore.edit { p -> p[KEY_ALLOWED_ORIGINS] = (p[KEY_ALLOWED_ORIGINS] ?: emptySet()) + origin }
+    }
+
+    fun removeAllowedOrigin(origin: String) = scope.launch {
+        app.configDataStore.edit { p -> p[KEY_ALLOWED_ORIGINS] = (p[KEY_ALLOWED_ORIGINS] ?: emptySet()) - origin }
     }
 
     fun setExpandedCategories(ids: Set<String>) = scope.launch {

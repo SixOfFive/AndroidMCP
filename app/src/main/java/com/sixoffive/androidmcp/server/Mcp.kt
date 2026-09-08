@@ -77,7 +77,18 @@ object Mcp {
         // A message with no `id` is a notification: never answer it, whatever the method is. The
         // old code only special-cased two names, so `notifications/roots/list_changed` — which every
         // roots-capable client sends right after `initialize` — got back a -32601 with `"id": null`.
-        if (!root.containsKey("id")) return Reply.None
+        if (!root.containsKey("id")) {
+            // The one notification with an effect: withdraw a pending approval so a late "Allow"
+            // tap cannot fire the camera for a call the client already abandoned.
+            if (method == "notifications/cancelled") {
+                val cancelled = ((root["params"] as? JsonObject)?.get("requestId"))
+                    ?.let { (it as? JsonPrimitive)?.contentOrNull }
+                if (cancelled != null && ApprovalManager.cancelByRpcId(cancelled)) {
+                    AuditLog.record("approval", client, false, "CANCELLED_BY_CLIENT: request $cancelled")
+                }
+            }
+            return Reply.None
+        }
 
         val id = root["id"]!!
         if (id !is JsonPrimitive || (!id.isString && id.longOrNull == null && id.doubleOrNull == null)) {
@@ -93,6 +104,12 @@ object Mcp {
                     putJsonArray("tools") { Capabilities.REGISTRY.forEach { add(toolDef(ctx, it)) } }
                 }))
                 "tools/call" -> Reply.Body(toolsCall(ctx, id, root, client))
+                // Media is transient, single-use and minted per call, so there is nothing static
+                // to enumerate. An empty list is legal and honest; the links themselves arrive as
+                // resource_link content blocks on the tool result that produced them.
+                "resources/list" -> Reply.Body(result(id, buildJsonObject { putJsonArray("resources") {} }))
+                "resources/templates/list" -> Reply.Body(result(id, buildJsonObject { putJsonArray("resourceTemplates") {} }))
+                "resources/read" -> Reply.Body(resourcesRead(id, root, client))
                 else -> Reply.Body(error(id, -32601, "Method not found: $method"))
             }
         }.getOrElse { t ->
@@ -113,9 +130,15 @@ object Mcp {
         val agreed = if (asked != null && asked in SUPPORTED) asked else PROTOCOL
         return buildJsonObject {
             put("protocolVersion", agreed)
-            // Only `tools` is declared: there is no SSE stream to push `listChanged` on, and no
-            // resources/prompts/logging implementation. Claiming more would be a false promise.
-            putJsonObject("capabilities") { putJsonObject("tools") {} }
+            // `tools` and `resources`. No `listChanged` on either: there is no SSE stream to push
+            // it on (GET /mcp is a 405), so claiming it would be a false promise. `resources`
+            // exists so a client can dereference the `resource_link` blocks that photo / audio /
+            // screenshot replies return — without it a conformant host sees a reference it has no
+            // protocol-level way to resolve.
+            putJsonObject("capabilities") {
+                putJsonObject("tools") {}
+                putJsonObject("resources") {}
+            }
             putJsonObject("serverInfo") {
                 put("name", "androidmcp")
                 put("title", "Android MCP")
@@ -211,7 +234,8 @@ object Mcp {
                 result(id, refusalResult(cap, gate))
             }
             GateResult.Allowed -> {
-                if (!ApprovalManager.require(ctx, cap, client)) {
+                // Pass the JSON-RPC id so notifications/cancelled can withdraw this approval.
+                if (!ApprovalManager.require(ctx, cap, client, (id as? JsonPrimitive)?.contentOrNull)) {
                     AuditLog.record(cap.id, client, false, "REQUIRES_USER_APPROVAL")
                     return result(id, approvalRefusal(cap))
                 }
@@ -237,6 +261,48 @@ object Mcp {
                 )
             }
         }
+    }
+
+    /**
+     * Serve a `resource_link` through the protocol instead of an out-of-band HTTP fetch.
+     *
+     * The URI is the one the link carried — `http(s)://host:port/media/<id>?k=<nonce>` — so a
+     * client can either dereference it here or GET it directly, whichever it prefers. Both paths
+     * consume the same single-use entry.
+     */
+    private fun resourcesRead(id: JsonElement, root: JsonObject, client: String): String {
+        val params = root["params"] as? JsonObject
+            ?: return error(id, -32602, "Invalid params: 'params' must be an object")
+        val uri = (params["uri"] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
+            ?: return error(id, -32602, "Invalid params: 'uri' must be a string")
+        val parsed = parseMediaUri(uri)
+            ?: return error(id, -32602, "Unknown resource: $uri (this server serves only the " +
+                "/media/<id>?k=<nonce> links returned by capture tools)")
+        val entry = MediaStore.take(parsed.first, parsed.second)
+            // -32002 is the spec's "resource not found". Expiry and single-use consumption both
+            // land here, so say which so a client does not retry forever.
+            ?: return error(id, -32002, "Resource not found: the link has expired (10-minute TTL) " +
+                "or was already fetched — media links are single-use")
+        AuditLog.record("resources/read", client, true, "served ${entry.bytes.size}B ${entry.mime}")
+        return result(id, buildJsonObject {
+            putJsonArray("contents") {
+                add(buildJsonObject {
+                    put("uri", uri)
+                    put("mimeType", entry.mime)
+                    put("blob", java.util.Base64.getEncoder().encodeToString(entry.bytes))
+                })
+            }
+        })
+    }
+
+    /** Pull (id, nonce) out of a media link this server minted; null for anything else. */
+    internal fun parseMediaUri(uri: String): Pair<String, String>? {
+        val path = uri.substringBefore('?')
+        val id = path.substringAfterLast("/media/", "").takeIf { it.isNotEmpty() && '/' !in it } ?: return null
+        val query = uri.substringAfter('?', "")
+        val nonce = query.split('&').firstOrNull { it.startsWith("k=") }?.removePrefix("k=") ?: return null
+        if (nonce.isEmpty()) return null
+        return id to nonce
     }
 
     // ---- result envelopes ----
@@ -287,10 +353,16 @@ object Mcp {
     private fun mediaBlocks(bytes: ByteArray, mime: String, name: String, isImage: Boolean): List<JsonObject> =
         if (ConfigStore.current.mediaAsLinks || bytes.size > LARGE_MEDIA_BYTES) {
             val (mid, nonce) = MediaStore.put(bytes, mime)
-            val scheme = if (ConfigStore.current.tls) "https" else "http"
-            // reachableHost, not bindHost: LAN binds 0.0.0.0 but the fetchable address is the LAN IP.
-            val host = Net.reachableHost(ConfigStore.current.bind)
-            val link = resourceLinkBlk("$scheme://$host:${ConfigStore.current.port}/media/$mid?k=$nonce", name, mime)
+            // The base the listener ACTUALLY bound, not live config: bind/TLS can be toggled
+            // without restarting the server, and a link built from the new setting points at an
+            // address the running listener never bound. Falls back to live config only if the
+            // service has not published a base yet.
+            val base = McpService.boundBase.value.ifEmpty {
+                val scheme = if (ConfigStore.current.tls) "https" else "http"
+                // reachableHost, not bindHost: LAN binds 0.0.0.0 but the fetchable address is the LAN IP.
+                "$scheme://${Net.reachableHost(ConfigStore.current.bind)}:${ConfigStore.current.port}"
+            }
+            val link = resourceLinkBlk("$base/media/$mid?k=$nonce", name, mime)
             if (!ConfigStore.current.mediaAsLinks) // auto-linked purely due to size — say why
                 listOf(textBlk("(${bytes.size / 1_000_000}+ MB — returned as a link instead of inline base64)"), link)
             else listOf(link)
