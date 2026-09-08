@@ -328,7 +328,7 @@ the live MCP spec at `modelcontextprotocol.io` — the server was verified with 
       **Connection & transport** / **Startup** cards. Layout verified on-device via
       screenshots on both the K70 tablet (1280×800) and the SM‑A037W phone (720×1600):
       the cards render cleanly on a narrow screen and the collapsible capability list
-      (11 categories, per-group counts, expand/collapse) works on the phone.
+      (11 categories, per-group counts, expand/collapse) works on the phone. Screenshots: [docs/](docs/).
 
 ---
 
