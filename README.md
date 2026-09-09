@@ -361,8 +361,16 @@ The v1 list below was fully checked off; this is its successor.
       the `structuredContent` refusal shape up front rather than discovering it by trial.
 - [x] **`list_files` is actually confined to granted folders.** `read` passed the client's string
       straight to `ContentResolver`, which resolves `file://` to a plain `FileInputStream` — so
-      `file:///proc/self/status` was readable. Containment is now checked by SAF document-id
-      ancestry, and non-`content://` schemes are refused.
+      `file:///proc/self/status` was readable. Non-`content://` schemes are now refused outright,
+      and containment is decided by the **owning provider** via
+      `DocumentsContract.isChildDocument`, not by this app guessing from the document id (they are
+      opaque provider strings — a first attempt at prefix matching refused perfectly good URIs
+      from Drive-style providers and from whole-volume grants). The provider's "no" is final; the
+      prefix rule survives only as a fallback for `externalstorage`, whose id layout is documented,
+      and everything else fails closed. The grant is re-checked against the persisted URI
+      permissions on every read, so revoking it in Settings takes effect at once.
+      Verified on-device across a granted read, `file://`, a doc outside the tree, a sibling tree,
+      and a foreign authority.
 - [x] **Media capability URLs are genuinely single-use.** The link was replayable for the full
       10-minute TTL, while a *wrong* nonce evicted the entry — and ids were a sequential base36
       counter on a route that needs no bearer token, so pending blobs could be enumerated and
