@@ -506,6 +506,63 @@ The v1 list below was fully checked off; this is its successor.
       `tools/list_changed` or progress notifications. Claude Code tolerates the 405; revisit only
       if a real client demands it.
 
+### v3 — the release build, and three things deliberately not done
+
+Written after investigating five candidate milestones. Three came back **skip**, and that half
+matters as much as the doing half: with v1 and v2 both complete, the temptation is to invent work.
+
+- [x] **A release build that is not `debuggable`.** The app in daily use was a *debug* build —
+      `dumpsys package` reported `pkgFlags=[ DEBUGGABLE … ]`, so the process was jdwp-attachable,
+      and both devices keep USB debugging on *because Shizuku requires it*. Anything with adb could
+      drive the app past its own double gate. `-r` was also a documented flag that could not work:
+      with no signing config it produced an unsigned APK that the installer handed to adb anyway.
+      Signing falls back to the debug key so the signature stays stable — changing keys forces an
+      uninstall, wiping tokens and grants — and costs nothing, since `debuggable` comes from the
+      build *type*.
+- [x] **Minification investigated and deliberately left OFF.** R8 silently breaks HTTPS: the first
+      TLS request succeeds and every one after it hangs, while the UI and audit log both insist the
+      server is running. `NettyChannelInitializer` loses its `@Sharable` marker. Five fixes failed,
+      including `-dontoptimize` (so it is not the optimizer) and `-keepattributes *Annotation*`,
+      which produced a byte-identical APK and thereby revealed itself as redundant. 14.6 MB → 2.9 MB
+      is not worth an advertised feature breaking after exactly one request. Full investigation in
+      [app/proguard-rules.pro](app/proguard-rules.pro) — including that **one request always
+      works**, so a single smoke test proves nothing.
+- [x] **Dropped `material-icons-extended`** — declared, never used, and **32% of the APK**. The
+      caveat above used to blame Netty for the size; Netty is ~7%.
+- [x] **`TlsKeystore` moved into the JVM suite.** It needed `Context` for one thing, `filesDir`.
+      The first run found a real bug: nothing checked that the stored cert and key belong together,
+      so a mismatched pair loaded cleanly and was served — every handshake failing while the app
+      reported success. Now compared by RSA modulus, with eleven tests covering fingerprint
+      stability, re-issue, corrupt material and the atomic commit.
+
+**Deliberately not done**
+
+- [ ] **Do NOT raise `targetSdk` 33 → 34/35.** It opts into *restrictions*, not APIs (`compileSdk`
+      is already 35), and Play policy is not a constraint here. Meanwhile 33 is buying three
+      behaviours this design depends on: an unlimited-duration `dataSync` foreground service (capped
+      at 6h per 24 at target 35, then killed), the ability to start that service from
+      `BOOT_COMPLETED` (forbidden at 35), and a **reusable `MediaProjection`** — which breaks at
+      **34**, where each projection is single-use, so `capture_screenshot` would work exactly once
+      and then throw forever. Revisit only if an OS update blocks installation.
+- [ ] **Do NOT treat APK size as a milestone.** Measured: the entire prize for an 87% cut is ~1.4
+      seconds per `adb install`.
+- [ ] **Do NOT add `logging`, `completions` or `prompts`.** `logging` is deprecated as of the
+      2026-07-28 revision; `completions` is structurally impossible for tool arguments
+      (`completion/complete` takes only `ref/prompt` and `ref/resource` — there is no `ref/tool`),
+      and serving package names through it would bypass the gate on `list_packages`; `prompts`
+      duplicates what a local `.claude/commands/*.md` does better.
+
+**Still open**
+
+- [ ] **Three instrumentation tests**, and no more: `take_photo` twice in a row (guarding the
+      camera-release fix), `record_audio` repeat, and `ConfigStore.currentBlocking()` on the main
+      thread. Note the ceiling — an instrumented process has foreground importance, so these guard
+      refactor regressions, not the background-restriction failure the error strings describe. Never
+      wire `connectedCheck` into `check`: the device-free JVM loop must keep working unplugged.
+- [ ] **`notifications/progress` during the approval wait.** 22 of 40 tools block on a human tap for
+      up to 25 s and the client sees a silent stall. Needs a streaming reply path verified on both
+      CIO and Netty; confirm `respondTextWriter` actually flushes per-write before committing to it.
+
 ### v1 — feature completeness *(done)*
 
 - [x] Scaffold + green build; core (gate, config, hashed tokens, audit)
