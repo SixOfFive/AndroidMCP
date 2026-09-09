@@ -260,7 +260,9 @@ plain JVM — no device or emulator needed:
 
 Anything that needs real hardware (camera, mic, screen capture, the ContentProvider-backed
 readers, Shizuku/root) is deliberately **not** in that suite and stays on manual on-device
-verification.
+verification — see [scripts/verify/](scripts/verify/) for the tools that do it: driving the server
+with the official MCP SDK, tapping the wire to see what a client really sends, and serving the
+dashboard against a device.
 
 ---
 
