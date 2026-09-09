@@ -183,10 +183,15 @@ class ToolSchemaTest {
         //
         // So this matches broadly and whitelists the genuine device-state reports instead.
         val suspicious = Regex("""return\s+"([^"]*)"""")
+        // Deliberately SHORT. Every entry here is a claim that the string is a legitimate result
+        // rather than a failure — and whitelisting "refused:", "invalid uri" and "cannot open"
+        // is what let FilesAccess return a containment refusal as isError:false, found only by
+        // exercising it on the device. If a string describes something the caller wanted and did
+        // not get, it belongs in a throw, not on this list.
         val allowed = listOf(
-            "provider not accessible", "unavailable", "not accessible", "no folders granted",
-            "granted folders are empty", "invalid uri", "cannot open", "refused:",
-            "lat:", "level:", "not available", "no external storage",
+            "provider not accessible", "unavailable", "not accessible",
+            "no folders granted", "granted folders are empty",
+            "lat:", "level:", "no external storage",
         )
         val offenders = mcpCode.lineSequence().withIndex().mapNotNull { (i, line) ->
             val m = suspicious.find(line) ?: return@mapNotNull null

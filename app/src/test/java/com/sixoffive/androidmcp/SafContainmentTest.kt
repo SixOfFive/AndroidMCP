@@ -1,97 +1,135 @@
 package com.sixoffive.androidmcp
 
 import com.sixoffive.androidmcp.server.FilesAccess
+import com.sixoffive.androidmcp.server.FilesAccess.Verdict
 import org.junit.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
  * `list_files` containment.
  *
- * The defect this guards: `FilesAccess.read` used to hand the client's string straight to
- * `ContentResolver.openInputStream`, which resolves `file://` to a plain `FileInputStream`. So
- * `{"uri":"file:///proc/self/status"}` read a file far outside every granted folder, while the
- * class documented itself as "limited to the SAF folder trees the user has granted" and the gate
- * only ever checked that *some* folder had been granted.
+ * The hole this guards: `FilesAccess.read` used to hand the client's string straight to
+ * `ContentResolver.openInputStream`, which resolves `file://` to a plain `FileInputStream` — so
+ * `file:///proc/self/status` was readable while the class documented itself as SAF-confined.
+ *
+ * The first fix compared document ids by string prefix. That is only sound for
+ * ExternalStorageProvider: document ids are opaque provider strings, which is why
+ * `DocumentsProvider` exposes `isChildDocument()` as a callback. The provider is now the authority;
+ * these cover the parts that are decidable without one.
  */
 class SafContainmentTest {
 
-    private val docsTree = "content://com.android.externalstorage.documents/tree/primary%3ADocuments"
-    private val trees = setOf(docsTree)
+    private val EXTERNAL = "com.android.externalstorage.documents"
 
-    private fun contained(uri: String) = FilesAccess.containedIn(uri, trees)
+    // ---- the policy: who gets the last word ----
 
     @Test
-    fun `a document inside the granted tree is allowed`() {
-        assertTrue(contained("$docsTree/document/primary%3ADocuments%2Fnotes.txt"))
-        assertTrue(contained("$docsTree/document/primary%3ADocuments%2Fsub%2Fdeep.txt"))
+    fun `the provider is authoritative when it answers yes`() {
+        // Even where the ids look unrelated — a Drive document id bears no resemblance to its
+        // tree's id, and that is exactly the case the prefix rule used to refuse.
+        assertTrue(FilesAccess.decide(structurallyInside = false, Verdict.CHILD, idSchemeUnderstood = false))
+        assertTrue(FilesAccess.decide(structurallyInside = false, Verdict.CHILD, idSchemeUnderstood = true))
     }
 
     @Test
-    fun `the granted tree root itself is allowed`() {
-        assertTrue(contained(docsTree))
+    fun `the provider is authoritative when it answers no`() {
+        // A "no" must stick even when the ids happen to look nested: only the provider knows what
+        // its ids mean, so a structural coincidence must not override it.
+        assertFalse(FilesAccess.decide(structurallyInside = true, Verdict.NOT_CHILD, idSchemeUnderstood = true))
+        assertFalse(FilesAccess.decide(structurallyInside = true, Verdict.NOT_CHILD, idSchemeUnderstood = false))
     }
+
+    @Test
+    fun `an unanswerable provider falls back only where the id layout is documented`() {
+        assertTrue(FilesAccess.decide(structurallyInside = true, Verdict.UNKNOWN, idSchemeUnderstood = true))
+        // Unknown provider + no answer = refuse. Fail closed.
+        assertFalse(FilesAccess.decide(structurallyInside = true, Verdict.UNKNOWN, idSchemeUnderstood = false))
+        assertFalse(FilesAccess.decide(structurallyInside = false, Verdict.UNKNOWN, idSchemeUnderstood = true))
+    }
+
+    // ---- the hierarchical id rule (the fallback) ----
+
+    @Test
+    fun `a document under the tree is inside it`() {
+        assertTrue(FilesAccess.idInside("primary:Documents/notes.txt", "primary:Documents"))
+        assertTrue(FilesAccess.idInside("primary:Documents/sub/deep.txt", "primary:Documents"))
+        assertTrue(FilesAccess.idInside("primary:Documents", "primary:Documents"))
+    }
+
+    @Test
+    fun `a sibling sharing a string prefix is NOT inside`() {
+        // "primary:Documents" must not authorise "primary:Documents2".
+        assertFalse(FilesAccess.idInside("primary:Documents2/x.txt", "primary:Documents"))
+        assertFalse(FilesAccess.idInside("primary:Documents2", "primary:Documents"))
+        assertFalse(FilesAccess.idInside("primary:Downloads/x.txt", "primary:Documents"))
+    }
+
+    @Test
+    fun `a whole-volume grant contains its children`() {
+        // Pre-Android-11 grants can hand back the volume root, whose id ends in ':' and whose
+        // children carry no slash after it. Requiring a separator refused every one of them —
+        // the tree would list files it then refused to read.
+        assertTrue(FilesAccess.idInside("primary:DCIM", "primary:"))
+        assertTrue(FilesAccess.idInside("primary:DCIM/Camera/x.jpg", "primary:"))
+        assertTrue(FilesAccess.idInside("primary:", "primary:"))
+        // ...but a different volume is still outside.
+        assertFalse(FilesAccess.idInside("secondary:DCIM", "primary:"))
+    }
+
+    @Test
+    fun `a trailing-slash tree id behaves the same way`() {
+        assertTrue(FilesAccess.idInside("abc/def", "abc/"))
+        assertFalse(FilesAccess.idInside("abcdef", "abc/"))
+    }
+
+    // ---- structural parsing: what never even reaches the provider ----
+
+    private fun parse(s: String) = FilesAccess.SafUri.parse(s)
 
     @Test
     fun `file scheme is refused — the original hole`() {
-        assertFalse(contained("file:///proc/self/status"))
-        assertFalse(contained("file:///data/data/com.sixoffive.androidmcp/shared_prefs/x.xml"))
-        assertFalse(contained("file:///sdcard/Documents/notes.txt"))
+        assertNull(parse("file:///proc/self/status"))
+        assertNull(parse("file:///data/data/com.sixoffive.androidmcp/shared_prefs/x.xml"))
+        assertNull(parse("file:///sdcard/Documents/notes.txt"))
     }
 
     @Test
-    fun `other schemes are refused`() {
+    fun `other schemes and malformed input are refused`() {
         for (u in listOf(
-            "/etc/passwd",
-            "http://example.com/x",
+            "/etc/passwd", "http://example.com/x", "", "content://",
             "android.resource://com.sixoffive.androidmcp/raw/x",
-            "",
-            "content://",
-        )) assertFalse(contained(u), "should refuse: $u")
+        )) assertNull(parse(u), "should refuse: $u")
     }
 
     @Test
-    fun `a different authority is refused even with a matching document id`() {
-        assertFalse(contained(
-            "content://com.example.evil.documents/tree/primary%3ADocuments/document/primary%3ADocuments%2Fx.txt"
-        ))
+    fun `traversal in a decoded id is refused`() {
+        assertNull(parse("content://$EXTERNAL/tree/primary%3ADocs/document/.."))
+        assertNull(parse("content://$EXTERNAL/tree/primary%3ADocs/document/%2E%2E"))
     }
 
     @Test
-    fun `a sibling tree with the granted tree as a string prefix is refused`() {
-        // "primary:Documents" must not authorise "primary:Documents2" — prefix matching without a
-        // separator would let a neighbouring folder through.
-        assertFalse(contained(
-            "content://com.android.externalstorage.documents/tree/primary%3ADocuments2/document/primary%3ADocuments2%2Fx.txt"
-        ))
-        assertFalse(contained(
-            "content://com.android.externalstorage.documents/tree/primary%3ADownloads/document/primary%3ADownloads%2Fx.txt"
-        ))
+    fun `tree and document ids are decoded`() {
+        val u = parse("content://$EXTERNAL/tree/primary%3ADocuments/document/primary%3ADocuments%2Fnotes.txt")
+        assertEquals(EXTERNAL, u!!.authority)
+        assertEquals("primary:Documents", u.treeId)
+        assertEquals("primary:Documents/notes.txt", u.documentId)
     }
 
     @Test
-    fun `a document id outside the tree is refused even under a granted tree URI`() {
-        // A crafted URI that keeps the granted tree segment but points the document elsewhere.
-        assertFalse(contained("$docsTree/document/primary%3ADownloads%2Fsecret.txt"))
+    fun `a bare tree URI parses with no document id`() {
+        val u = parse("content://$EXTERNAL/tree/primary%3ADocuments")
+        assertEquals("primary:Documents", u!!.treeId)
+        assertNull(u.documentId)
     }
 
     @Test
-    fun `traversal in the document id is refused`() {
-        assertFalse(contained("$docsTree/document/primary%3ADocuments%2F..%2FDownloads%2Fx.txt"))
-        assertFalse(contained("$docsTree/document/.."))
-    }
-
-    @Test
-    fun `nothing is contained when no folder has been granted`() {
-        assertFalse(FilesAccess.containedIn("$docsTree/document/primary%3ADocuments%2Fx.txt", emptySet()))
-    }
-
-    @Test
-    fun `multiple granted trees each authorise their own contents`() {
-        val dl = "content://com.android.externalstorage.documents/tree/primary%3ADownloads"
-        val both = setOf(docsTree, dl)
-        assertTrue(FilesAccess.containedIn("$docsTree/document/primary%3ADocuments%2Fa.txt", both))
-        assertTrue(FilesAccess.containedIn("$dl/document/primary%3ADownloads%2Fb.txt", both))
-        assertFalse(FilesAccess.containedIn("$dl/document/primary%3APictures%2Fc.jpg", both))
+    fun `authority is captured so a different provider can be rejected`() {
+        val evil = parse("content://com.example.evil.documents/tree/primary%3ADocs/document/primary%3ADocs%2Fx")
+        assertEquals("com.example.evil.documents", evil!!.authority)
+        // The authority comparison happens in allowed(); this just pins that it is available.
+        assertTrue(evil.authority != EXTERNAL)
     }
 }
