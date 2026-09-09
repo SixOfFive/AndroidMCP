@@ -52,6 +52,10 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
             excludes += "/META-INF/INDEX.LIST"
             excludes += "/META-INF/io.netty.versions.properties"
+            // jansi (pulled in by ktor-server-core) ships Windows .dll and macOS .jnilib blobs,
+            // and GraalVM native-image metadata — none of it reachable on Android.
+            excludes += "/org/fusesource/jansi/internal/native/**"
+            excludes += "/META-INF/native-image/**"
         }
     }
 }
@@ -67,7 +71,6 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
-    implementation(libs.androidx.material.icons.extended)
     debugImplementation(libs.androidx.ui.tooling)
 
     implementation(libs.androidx.datastore.preferences)

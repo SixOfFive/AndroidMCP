@@ -320,9 +320,13 @@ by **121 JVM unit tests** (`./gradlew :app:testDebugUnitTest`). Remaining rough 
 - **Two real clients have connected**: the official MCP Python SDK 2.2.0 and Claude Code 2.1.251
   (which negotiates down from its own newer revision). Claude Desktop and the MCP Inspector have
   not been tried.
-- **TLS pulls in the Netty engine** (larger APK), because CIO cannot serve HTTPS at all. The
-  cert is self-signed, so a client must pin the SHA-256 the app shows or skip verification;
-  Node-based clients have no pinning knob and need the cert as a trusted CA instead.
+- **TLS pulls in the Netty engine**, because CIO cannot serve HTTPS at all — and there is no
+  alternative: the Ktor issue is open since 2019, and the servlet-container engines are not
+  viable on Android. Netty is ~2.0 MB, about 7% of the APK; the caveat here used to blame it for
+  the APK size, which was wrong by more than 4× — the actual bulk was an unused
+  `material-icons-extended` dependency (32%), now removed. The cert is self-signed, so a client
+  must pin the SHA-256 the app shows or skip verification; Node-based clients have no pinning
+  knob and need the cert as a trusted CA instead.
 - **The server implements protocol revision `2025-06-18` only.** An unsupported
   `MCP-Protocol-Version` header is answered with a 400 naming what is supported.
 - **`resource_link` media is served both ways** — through `resources/read` and as a plain HTTP GET
