@@ -1,6 +1,6 @@
 # Verification tools
 
-Three throwaway-looking scripts that each caught something the unit tests could not. Kept because
+Four throwaway-looking scripts that each caught something the unit tests could not. Kept because
 the findings were only reachable by driving the running server, and re-deriving them took a while.
 
 All of them read the bearer token from `MCP_TOKEN` — none stores a credential.
@@ -44,6 +44,27 @@ handshake, so this is the only way to see it.
 `2025-11-25` with **no** version header, because negotiation lives in the body. That is why the
 server must answer the probe with **400, not 404**, and why the version-header check must never
 apply to `initialize`.
+
+## `mcp_progress.py` — watch progress arrive during the approval wait
+
+```bash
+adb forward tcp:8765 tcp:8765
+export MCP_URL=http://127.0.0.1:8765/mcp
+uv run --quiet --with mcp python scripts/verify/mcp_progress.py read_clipboard
+```
+
+Calls a high-impact tool with a `progress_callback` and timestamps every notification, so
+"does the client hear anything while it waits" gets an answer with numbers on it. Leave the prompt
+untouched for the deny-by-timeout path; tap Allow for the whole flow.
+
+**Measured on the K70** (loopback bind, over adb-forward): notifications at 2.09 s, 4.10 s, 6.10 s …
+exactly 2.00 s apart, strictly increasing, all reading `waiting for approval on the device`. Ignored,
+the structured refusal lands at 26.13 s; approved at ~18 s, the result lands 0.1 s after the tap.
+
+**Why it exists:** the JVM suite can prove the bytes are well-formed and that a reference SDK parses
+them, but only a device has a real human-approval wait to stream through. It also caught that an
+`adb forward` dropping mid-stream surfaces as `SSE stream ended without a response` — worth knowing
+before blaming the server for it.
 
 ## `dash_serve.py` — drive the browser dashboard against a device
 
