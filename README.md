@@ -240,6 +240,15 @@ device; `-s <serial>` for one, `-r` for a release build, `-b` to build only):
 ./scripts/build-and-install.sh
 ```
 
+**Prefer `-r` for anything left running.** A debug build is `debuggable`, so the process is
+jdwp-attachable by anything with adb — and these devices keep USB debugging enabled because
+Shizuku needs it, which means the debug build lets adb drive the app straight past its own
+gate. The release variant is not debuggable. It is signed with the debug key unless you
+configure a real one (`ANDROIDMCP_KEYSTORE`, `ANDROIDMCP_KEYSTORE_PASSWORD`,
+`ANDROIDMCP_KEY_ALIAS`, `ANDROIDMCP_KEY_PASSWORD` in `~/.gradle/gradle.properties` or the
+environment) — keeping the debug signature means it installs over an existing debug build
+without an uninstall, which would wipe tokens, folder grants and special-access approvals.
+
 ### Tests
 
 The protocol, the HTTP layer, SAF containment, the TLS cert and the tool schemas all run on a

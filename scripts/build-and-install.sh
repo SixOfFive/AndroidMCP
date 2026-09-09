@@ -38,9 +38,29 @@ fi
 echo "==> building $VARIANT APK…"
 ./gradlew "$TASK" --console=plain
 
-APK="$(find app/build/outputs/apk/$VARIANT -name '*.apk' 2>/dev/null | head -1)"
-[ -n "$APK" ] || { echo "ERROR: no APK produced under app/build/outputs/apk/$VARIANT" >&2; exit 1; }
+# Name the artifact instead of globbing. `find ... | head -1` would happily pick up
+# app-release-unsigned.apk when no signing key is configured, and then `adb install` fails with
+# INSTALL_PARSE_FAILED_NO_CERTIFICATES several steps later, blaming the device.
+APK="app/build/outputs/apk/$VARIANT/app-$VARIANT.apk"
+if [ ! -f "$APK" ]; then
+  UNSIGNED="app/build/outputs/apk/$VARIANT/app-$VARIANT-unsigned.apk"
+  if [ -f "$UNSIGNED" ]; then
+    echo "ERROR: only an UNSIGNED APK was produced: $UNSIGNED" >&2
+    echo "       Android cannot install it. Configure a signing key (ANDROIDMCP_KEYSTORE etc." >&2
+    echo "       in ~/.gradle/gradle.properties) — see app/build.gradle.kts." >&2
+  else
+    echo "ERROR: no APK at $APK" >&2
+  fi
+  exit 1
+fi
 echo "==> built: $APK ($(du -h "$APK" | cut -f1))"
+
+if [ "$VARIANT" = "release" ]; then
+  # Worth saying out loud: a release build is NOT debuggable, which is the whole reason the
+  # variant exists — the debug build is jdwp-attachable by anything with adb, and these devices
+  # keep USB debugging on for Shizuku.
+  echo "    (release: not debuggable)"
+fi
 
 [ "$INSTALL" = 1 ] || { echo "(build only) done."; exit 0; }
 
