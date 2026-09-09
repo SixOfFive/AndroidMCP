@@ -140,7 +140,10 @@ object Elevated {
     // Binary output (e.g. `screencap -p`) must NOT have stderr merged into the byte stream.
     private fun shizukuBytes(cmd: String): ByteArray? = runCatching {
         val r = drain(shizukuProcess(cmd))
-        if (r.timedOut) null else r.bytes
+        // Truncation matters as much as a timeout here. `timedOut` is false when the reader
+        // stopped because it hit the cap, so gating on it alone handed back a PNG cut off
+        // mid-IDAT as if it were a complete image.
+        if (r.timedOut || r.truncated) null else r.bytes
     }.getOrNull()
 
     fun requestShizuku(code: Int) {

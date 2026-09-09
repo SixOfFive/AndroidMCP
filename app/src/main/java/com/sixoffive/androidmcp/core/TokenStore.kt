@@ -47,6 +47,21 @@ object TokenStore {
     private fun sha256Hex(s: String): String =
         MessageDigest.getInstance("SHA-256").digest(s.toByteArray()).joinToString("") { "%02x".format(it) }
 
+    /**
+     * A client name not already in use.
+     *
+     * `"client-${tokens.size + 1}"` reused a name after a revoke: revoke client-2 of three and the
+     * next mint is client-3 again. Names are the identity the approval prompt shows, the audit log
+     * records, and `notifications/cancelled` is scoped by — so two live tokens sharing one meant a
+     * second holder could withdraw the first's pending approvals and their audit rows merged.
+     */
+    fun nextClientName(existing: List<ClientToken>): String {
+        val taken = existing.map { it.name }.toSet()
+        var n = existing.size + 1
+        while ("client-$n" in taken) n++
+        return "client-$n"
+    }
+
     /** Generate a new token, store its hash, return the raw value (shown once). */
     fun generate(name: String): String {
         val bytes = ByteArray(24).also { SecureRandom().nextBytes(it) }

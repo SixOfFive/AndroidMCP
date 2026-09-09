@@ -175,31 +175,45 @@ class ToolSchemaTest {
     @Test
     fun `failures are thrown, never returned as an ordinary string`() {
         // A handler that RETURNS its complaint produces a *successful* tool result whose text
-        // merely reads like an error — isError:false, audited "ok". Found by driving the real MCP
-        // Python SDK (`torch {}` came back isError:false), and then found AGAIN by review: the
-        // first guard regex only matched "provide"/"unknown", so it could not see the nine sites
-        // saying "needs"/"invalid" — several of them on high-impact tools, where the owner has
-        // already approved the call before the handler looks at its arguments.
+        // merely reads like an error — isError:false, audited "ok".
         //
-        // So this matches broadly and whitelists the genuine device-state reports instead.
-        val suspicious = Regex("""return\s+"([^"]*)"""")
-        // Deliberately SHORT. Every entry here is a claim that the string is a legitimate result
-        // rather than a failure — and whitelisting "refused:", "invalid uri" and "cannot open"
-        // is what let FilesAccess return a containment refusal as isError:false, found only by
-        // exercising it on the device. If a string describes something the caller wanted and did
-        // not get, it belongs in a throw, not on this list.
-        val allowed = listOf(
-            "provider not accessible", "unavailable", "not accessible",
-            "no folders granted", "granted folders are empty",
-            "lat:", "level:", "no external storage",
+        // This matcher has now been wrong twice. v1 matched only "provide"/"unknown", missing nine
+        // sites saying "needs"/"invalid". v2 matched only `return "..."`, so it could not see
+        // `else -> "unknown action…"` (expression position) or `return listOf(textBlk("…"))` — and
+        // reported zero offenders while nine lived. It scans every string literal now, and the
+        // whitelist matches whole messages so one word cannot blanket-exempt unrelated lines.
+        val literals = Regex(""""([^"\\]{12,})"""")
+        val failureWords = Regex(
+            "(?i)\\b(needs|need a|provide|unknown|invalid|could not|cannot|can't|failed|" +
+                "not installed|not launchable|no writable|isn't active|not available|refused)\\b"
         )
-        val offenders = mcpCode.lineSequence().withIndex().mapNotNull { (i, line) ->
-            val m = suspicious.find(line) ?: return@mapNotNull null
-            val msg = m.groupValues[1]
-            val looksLikeFailure = Regex("(?i)\\b(needs|provide|unknown|invalid|could not|cannot|failed|no app can)\\b")
-                .containsMatchIn(msg)
-            val whitelisted = allowed.any { msg.contains(it, ignoreCase = true) }
-            if (looksLikeFailure && !whitelisted) "  line ${i + 1}: $msg" else null
+        // Whole-message exemptions: each is a claim that the string is a legitimate RESULT.
+        val allowed = setOf(
+            "contacts provider not accessible",
+            "calendar provider not accessible",
+            "SMS provider not accessible",
+            "call log provider not accessible",
+            "no folders granted — add one in androidmcp (Shared folders → Add folder)",
+            "granted folders are empty",
+        )
+        // Substrings that are legitimate field VALUES rather than outcomes — a Wi-Fi SSID the OS
+        // withholds, a settings value that cannot be disambiguated.
+        val valueFragments = listOf("unknown ssid", "redacted", "cannot distinguish")
+        // Scope to the capability runners. Above them is the JSON-RPC layer, whose `error(...)`
+        // builders legitimately carry "Invalid Request" / "Unknown tool" text — those ARE the
+        // failure path, not a failure disguised as success.
+        val handlers = mcpCode.substringAfter("private suspend fun execute(")
+        val offenders = handlers.lineSequence().withIndex().flatMap { (i, line) ->
+            // Only lines that PRODUCE a value: a return, or a `->` arm. Assignments and calls that
+            // merely mention a string are not results.
+            if (!line.contains("return ") && !line.contains("->")) return@flatMap emptySequence<String>()
+            if (line.contains("throw ")) return@flatMap emptySequence<String>()
+            literals.findAll(line).map { it.groupValues[1] }
+                .filter { msg ->
+                    failureWords.containsMatchIn(msg) && msg !in allowed &&
+                        valueFragments.none { msg.contains(it, ignoreCase = true) }
+                }
+                .map { "  line ${i + 1}: $it" }
         }.toList()
         assertTrue(offenders.isEmpty(),
             "these report a failure as a SUCCESS; throw ToolArgError / ToolExecError instead:\n" +

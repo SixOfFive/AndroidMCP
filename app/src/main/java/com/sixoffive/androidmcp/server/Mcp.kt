@@ -648,7 +648,7 @@ object Mcp {
         val facing = (args["camera"]?.jsonPrimitive?.contentOrNull ?: "back").trim().lowercase()
         if (facing != "back" && facing != "front") return listOf(textBlk("unknown camera '$facing' — use 'back' or 'front'"))
         val jpeg = CameraCapture.capture(ctx, facing)
-            ?: return listOf(textBlk("Camera capture failed or timed out — another app may hold the camera, or the app is backgrounded (open androidmcp and retry)."))
+            ?: throw ToolExecError("Camera capture failed or timed out — another app may hold the camera, or the app is backgrounded (open androidmcp and retry).")
         val opts = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
         android.graphics.BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, opts)
         return listOf(textBlk("Captured ${opts.outWidth}x${opts.outHeight} JPEG from the $facing camera (${jpeg.size} bytes).")) +
@@ -658,17 +658,17 @@ object Mcp {
     private suspend fun recordAudio(ctx: Context, args: JsonObject): List<JsonObject> {
         val secs = (args["seconds"]?.jsonPrimitive?.intOrNull ?: 5).coerceIn(1, 30)
         val bytes = AudioCapture.record(ctx, secs)
-            ?: return listOf(textBlk("Audio capture failed — the mic may be in use, or the app is backgrounded (open androidmcp and retry)."))
+            ?: throw ToolExecError("Audio capture failed — the mic may be in use, or the app is backgrounded (open androidmcp and retry).")
         return listOf(textBlk("Recorded ${secs}s of audio (${bytes.size} bytes, AAC/MP4).")) +
             mediaBlocks(bytes, "audio/mp4", "audio.m4a", isImage = false)
     }
 
     private suspend fun screenshot(ctx: Context): List<JsonObject> {
         if (ProjectionHolder.projection == null) {
-            return listOf(textBlk("Screen capture isn't active. Open androidmcp and tap 'Start screen sharing' (Android requires a one-time on-device consent), then retry."))
+            throw ToolExecError("Screen capture isn't active. Open androidmcp and tap 'Start screen sharing' (Android requires a one-time on-device consent), then retry.")
         }
         val jpeg = ScreenCapture.capture(ctx)
-            ?: return listOf(textBlk("Screen capture failed — the projection may have been revoked. Re-start screen sharing in androidmcp."))
+            ?: throw ToolExecError("Screen capture failed — the projection may have been revoked. Re-start screen sharing in androidmcp.")
         val opts = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
         android.graphics.BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, opts)
         return listOf(textBlk("Captured screen ${opts.outWidth}x${opts.outHeight} (${jpeg.size} bytes).")) +
@@ -1308,7 +1308,7 @@ object Mcp {
         } catch (t: SecurityException) {
             throw ToolExecError("could not set $streamName volume: ${t.message ?: "Notification Policy access required"} — this usually means Do Not Disturb is active; changing ring/notification volume (or dropping it to 0) while DND is on needs Notification Policy (DND) access")
         } catch (t: Throwable) {
-            "could not set $streamName volume: ${t.message ?: t.javaClass.simpleName}"
+            throw ToolExecError("could not set $streamName volume: ${t.message ?: t.javaClass.simpleName}")
         }
     }
 
@@ -1491,7 +1491,7 @@ object Mcp {
                 }
             }
             if (found < 0L)
-                return "no writable calendar found on this device - add an account with a writable calendar, or pass an explicit 'calendar_id'"
+                throw ToolExecError("no writable calendar found on this device - add an account with a writable calendar, or pass an explicit 'calendar_id'")
             found
         }
 
@@ -1650,13 +1650,15 @@ object Mcp {
                     })
                 }
             }
-            else -> "unknown action '$action' — use get or put"
+            else -> throw ToolArgError("unknown action '$action' — use get or put")
         }
     }
 
     private fun rootScreenshot(): List<JsonObject> {
         val png = Elevated.execBytes("screencap -p")
-        if (png == null || png.isEmpty()) return listOf(textBlk("silent screencap failed or returned no data"))
+        // Reachable whenever execBytes gives up — including, since the drain fix, when the PNG
+        // exceeded the 1 MB output cap and would otherwise have been served half-written.
+        if (png == null || png.isEmpty()) throw ToolExecError("silent screencap failed or returned no data")
         return listOf(textBlk("silent screenshot (${png.size} bytes, via ${Elevated.source()})")) +
             mediaBlocks(png, "image/png", "screen.png", isImage = true)
     }
@@ -1670,13 +1672,13 @@ object Mcp {
         val pkg = args["package"]?.jsonPrimitive?.contentOrNull
             ?: throw ToolArgError("provide a 'package' to launch (e.g. com.android.settings)")
         val intent = ctx.packageManager.getLaunchIntentForPackage(pkg)
-            ?: return "app not installed or not launchable: $pkg"
+            ?: throw ToolExecError("app not installed or not launchable: $pkg")
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         return try {
             ctx.startActivity(intent)
             "launched $pkg (note: Android may block launching apps while androidmcp is in the background)"
         } catch (t: Throwable) {
-            "could not launch $pkg: ${t.message}"
+            throw ToolExecError("could not launch $pkg: ${t.message}")
         }
     }
 }

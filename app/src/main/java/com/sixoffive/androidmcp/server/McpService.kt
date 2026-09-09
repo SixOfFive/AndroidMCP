@@ -318,7 +318,7 @@ private suspend fun rejected(call: ApplicationCall, kind: String, detail: String
     // a peer-controlled hostname (so changing it resets your own bucket), and that name would be
     // written into the audit log the UI presents as the trust record.
     val host = normaliseHost(call.request.local.remoteAddress)
-    val r = AccessControl.recordRejection(host, detail)
+    val r = AccessControl.recordRejection(host, detail, kind = kind)
     // One line per host per minute, carrying the count it stands for, so a patient prober cannot
     // scroll a real event out of the 200-entry ring.
     r.logLine?.let { AuditLog.record("rejected:$kind", host, false, it) }

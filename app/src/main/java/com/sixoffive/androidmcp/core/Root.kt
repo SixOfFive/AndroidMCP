@@ -32,6 +32,8 @@ object Root {
         // Binary output: stderr stays separate so it cannot corrupt the PNG/JPEG bytes.
         val p = ProcessBuilder("su", "-c", cmd).start()
         val r = Elevated.drain(p)
-        if (r.timedOut) null else r.bytes
+        // A capped read is as unusable as a timed-out one for binary output — half a PNG is not
+        // a PNG. `timedOut` is false on the truncation path, so it must be checked separately.
+        if (r.timedOut || r.truncated) null else r.bytes
     }.getOrNull()
 }

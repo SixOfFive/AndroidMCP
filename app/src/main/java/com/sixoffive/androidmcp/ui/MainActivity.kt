@@ -450,7 +450,7 @@ private fun ServerScreen() {
             // ---- tokens ----
             item {
                 SectionCard("Client tokens") {
-                    OutlinedButton(onClick = { TokenStore.generate("client-${tokens.size + 1}") }) {
+                    OutlinedButton(onClick = { TokenStore.generate(TokenStore.nextClientName(tokens)) }) {
                         Text("Generate token")
                     }
                     if (minted.isNotEmpty()) {

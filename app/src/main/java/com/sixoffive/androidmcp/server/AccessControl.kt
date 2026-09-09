@@ -98,9 +98,23 @@ internal object AccessControl {
      * 200-entry ring clean in about twenty. The audit log is the UI's trust record — an attacker
      * must not be able to scroll a real event out of it.
      */
-    fun recordRejection(host: String, detail: String, nowMs: Long = System.currentTimeMillis()): Rejection {
+    fun recordRejection(
+        host: String,
+        detail: String,
+        nowMs: Long = System.currentTimeMillis(),
+        /**
+         * Buckets are per (kind, host), not per host.
+         *
+         * A shared bucket meant routine `/media` misses — a link past its TTL, a consumed
+         * single-use link, one evicted at capacity — debited the same allowance as failed auth.
+         * Walk 45 captured links in order and the early ones are legitimately gone, so the client
+         * throttles itself out of its OWN valid links, and the next genuine auth failure answers
+         * 429 without a `WWW-Authenticate` instead of 401.
+         */
+        kind: String = "auth",
+    ): Rejection {
         evictIdle(nowMs)
-        val b = buckets.computeIfAbsent(host) { Bucket(BURST.toDouble(), nowMs) }
+        val b = buckets.computeIfAbsent("$kind\u0000$host") { Bucket(BURST.toDouble(), nowMs) }
         synchronized(b) {
             val elapsedMin = (nowMs - b.lastRefillMs).coerceAtLeast(0L) / 60_000.0
             b.tokens = (b.tokens + elapsedMin * REFILL_PER_MINUTE).coerceAtMost(BURST.toDouble())
@@ -119,7 +133,8 @@ internal object AccessControl {
     }
 
     /** How many rejections this host has left before it is throttled (diagnostics/tests). */
-    fun remaining(host: String): Int = buckets[host]?.let { synchronized(it) { it.tokens.toInt() } } ?: BURST
+    fun remaining(host: String, kind: String = "auth"): Int =
+        buckets["$kind\u0000$host"]?.let { synchronized(it) { it.tokens.toInt() } } ?: BURST
 
     private fun evictIdle(nowMs: Long) {
         if (buckets.size < 256) return

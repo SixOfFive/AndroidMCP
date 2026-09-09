@@ -55,6 +55,9 @@ object MediaStore {
         return if (map.remove(id, e)) e else null            // consume; lose the race → not found
     }
 
+    /** Test hook — the map is process-global, so tests must be able to isolate themselves. */
+    fun clear() = map.clear()
+
     /** Test/diagnostic: how many blobs are currently held. */
     fun size(): Int { sweepExpired(); return map.size }
 

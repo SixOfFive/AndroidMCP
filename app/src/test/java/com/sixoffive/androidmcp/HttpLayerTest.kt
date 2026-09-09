@@ -39,6 +39,9 @@ class HttpLayerTest {
         // The rejection token bucket is process-global, so one test's probing would otherwise
         // throttle every test that runs after it.
         com.sixoffive.androidmcp.server.AccessControl.reset()
+        // MediaStore is process-global too: without this the capacity tests below depend on
+        // whatever earlier tests happened to leave in the map.
+        com.sixoffive.androidmcp.server.MediaStore.clear()
         val hash = MessageDigest.getInstance("SHA-256").digest(token.toByteArray())
             .joinToString("") { "%02x".format(it) }
         TokenStore.tokens.value = listOf(ClientToken(name = "laptop", hashHex = hash))
@@ -240,6 +243,19 @@ class HttpLayerTest {
         var last = HttpStatusCode.OK
         repeat(40) { last = c.get("/media/nosuch$it?k=wrong").status }
         assertEquals(HttpStatusCode.TooManyRequests, last, "probing /media must eventually throttle")
+    }
+
+    @Test
+    fun `the newest link survives filling the store to capacity`() {
+        // Falsifying version of the capacity test: the previous one tolerated the entry being
+        // evicted, so it passed against the pre-fix code too. take() must never be the thing that
+        // destroys a live blob, so the most recently stored link has to survive a full store.
+        val MS = com.sixoffive.androidmcp.server.MediaStore
+        repeat(40) { MS.put(byteArrayOf(it.toByte()), "image/jpeg") }
+        val (id, nonce) = MS.put("NEWEST".toByteArray(), "image/jpeg")
+        val e = MS.take(id, nonce)
+        assertTrue(e != null, "the newest link was destroyed while the store was at capacity")
+        assertEquals("NEWEST", String(e!!.bytes))
     }
 
     @Test
