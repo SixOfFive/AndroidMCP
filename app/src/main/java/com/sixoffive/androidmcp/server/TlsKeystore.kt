@@ -1,6 +1,7 @@
 package com.sixoffive.androidmcp.server
 
 import android.content.Context
+import com.sixoffive.androidmcp.core.AuditLog
 import io.ktor.network.tls.certificates.buildKeyStore
 import io.ktor.network.tls.extensions.HashAlgorithm
 import java.net.InetAddress
@@ -45,14 +46,29 @@ object TlsKeystore {
                 keystoreOf(key, arrayOf(cert))
             }.getOrNull()
             if (loaded != null) return loaded
+            // Falling through means the stored cert is expired or no longer covers this device's
+            // address, so it must be re-issued. Say so in the audit log rather than silently
+            // changing the fingerprint the owner may have pinned in a client.
+            AuditLog.record(
+                "tls", "local", true,
+                "re-issuing certificate (expired, or no SAN for ${wanted.joinToString()}) — " +
+                    "the pinned SHA-256 will change",
+            )
         }
         // Generate a fresh self-signed cert+key, persist the DER, and build the keystore.
         val gen = generate(wanted)
         val key = gen.getKey(ALIAS, PW) as PrivateKey
         val chain: Array<Certificate> = gen.getCertificateChain(ALIAS)
+        // Write to temporaries and rename only once BOTH succeed. Writing the two files in place
+        // left a window where a failure between them (ENOSPC, process death) produced a new cert
+        // beside the old key — a pair that loads fine (`checkValidity` and `covers` both pass) but
+        // can never complete a handshake, on every subsequent start, until deleted by hand.
         runCatching {
-            cf.outputStream().use { it.write(chain[0].encoded) } // X.509 DER
-            kf.outputStream().use { it.write(key.encoded) }       // PKCS8 DER
+            val ct = File(cf.parentFile, "$CERT_FILE.tmp")
+            val kt = File(kf.parentFile, "$KEY_FILE.tmp")
+            ct.outputStream().use { it.write(chain[0].encoded) } // X.509 DER
+            kt.outputStream().use { it.write(key.encoded) }       // PKCS8 DER
+            check(ct.renameTo(cf) && kt.renameTo(kf)) { "could not commit TLS material" }
         }
         return keystoreOf(key, chain)
     }

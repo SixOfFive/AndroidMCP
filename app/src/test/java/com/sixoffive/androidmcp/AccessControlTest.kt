@@ -63,6 +63,17 @@ class AccessControlTest {
     }
 
     @Test
+    fun `an allowlisted origin matches case-insensitively`() {
+        // Browsers serialise scheme and host lowercased, but the app's text field stores whatever
+        // the owner typed — so an entry like this was accepted, persisted and displayed back
+        // looking correct while never matching anything, with a silent 403 and no explanation.
+        assertTrue(allowed("https://dashboard.mylab.net", list = setOf("https://Dashboard.MyLab.net")))
+        assertTrue(allowed("https://dashboard.mylab.net", list = setOf("HTTPS://DASHBOARD.MYLAB.NET")))
+        // Still exact on everything else.
+        assertFalse(allowed("https://dashboard.mylab.net.evil.com", list = setOf("https://Dashboard.MyLab.net")))
+    }
+
+    @Test
     fun `a hostname that merely contains localhost is not local`() {
         assertFalse(allowed("http://notlocalhost:3000"))
         assertFalse(allowed("http://localhost.attacker.tld"))

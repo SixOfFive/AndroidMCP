@@ -26,7 +26,10 @@ internal object AccessControl {
     fun originAllowed(origin: String?, allowBrowser: Boolean, allowed: Set<String>): Boolean {
         if (origin == null) return true          // not a browser; the bearer token still applies
         if (!allowBrowser) return false
-        if (origin in allowed) return true
+        // Case-insensitive: browsers always serialise scheme and host lowercased, but the app's
+        // text field stores whatever the owner typed. "https://Dashboard.MyLab.net" would be
+        // accepted, persisted and displayed back looking correct while never matching anything.
+        if (allowed.any { it.equals(origin, ignoreCase = true) }) return true
         return isLocalOrigin(origin)
     }
 

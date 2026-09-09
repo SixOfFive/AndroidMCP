@@ -28,7 +28,7 @@ import io.ktor.server.engine.applicationEngineEnvironment
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.engine.sslConnector
 import io.ktor.server.request.contentLength
-import io.ktor.server.request.receiveText
+import io.ktor.server.request.receiveChannel
 import io.ktor.server.response.respondBytes
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
@@ -210,6 +210,7 @@ internal fun Application.installRoutes(
                 applyCors(call, origin)
                 call.respondText("", status = HttpStatusCode.NoContent)
             } else {
+                if (rejected(call, "origin", "forbidden preflight origin: $origin")) return@options
                 call.respondText("", status = HttpStatusCode.Forbidden)
             }
         }
@@ -246,8 +247,13 @@ internal fun Application.installRoutes(
                 call.respondText("request body too large", status = HttpStatusCode.PayloadTooLarge)
                 return@post
             }
-            val body = call.receiveText()
-            if (body.length > MAX_BODY_BYTES) { // chunked bodies declare no length
+            // Read through a bounded copy rather than calling receiveText() and measuring after.
+            // A `Transfer-Encoding: chunked` body declares no length, so the check above never
+            // fires for one — and receiveText() buffers the WHOLE stream into a String first, so
+            // the cap was enforced only once the damage was done. Ktor 2.3.12 has no request-size
+            // plugin, so the bound has to be applied while reading.
+            val body = call.receiveBoundedText(MAX_BODY_BYTES)
+            if (body == null) {
                 call.respondText("request body too large", status = HttpStatusCode.PayloadTooLarge)
                 return@post
             }
@@ -277,10 +283,17 @@ internal fun Application.installRoutes(
                 call.respondText("forbidden origin", status = HttpStatusCode.Forbidden); return@get
             }
             if (origin != null) applyCors(call, origin)
-            val id = call.parameters["id"] ?: return@get call.respondText("not found", status = HttpStatusCode.NotFound)
+            val id = call.parameters["id"]
             val nonce = call.request.queryParameters["k"] ?: ""
-            val e = MediaStore.take(id, nonce)
-                ?: return@get call.respondText("not found or expired", status = HttpStatusCode.NotFound)
+            val e = id?.let { MediaStore.take(it, nonce) }
+            if (e == null) {
+                // Metered and audited like every other refusal. /media carries no bearer token by
+                // design, so without this it was the one unauthenticated surface an attacker could
+                // probe indefinitely at no cost and leaving no trace.
+                if (rejected(call, "media", "no such media id, or wrong/expired key")) return@get
+                call.respondText("not found or expired", status = HttpStatusCode.NotFound)
+                return@get
+            }
             // Capability URLs must not be cached by anything between here and the client, and the
             // bytes must not be sniffed into an executable type.
             call.response.headers.append("Cache-Control", "no-store")
@@ -299,7 +312,12 @@ internal fun Application.installRoutes(
  * route should stop.
  */
 private suspend fun rejected(call: ApplicationCall, kind: String, detail: String): Boolean {
-    val host = call.request.local.remoteHost
+    // `remoteHost` (not `remoteAddress`) bottoms out in InetSocketAddress.getHostName(), a reverse
+    // DNS lookup — on the UNAUTHENTICATED reject path. With a slow or blackholed resolver every
+    // rejected probe would pin an IO thread for the resolver timeout, the throttle key would become
+    // a peer-controlled hostname (so changing it resets your own bucket), and that name would be
+    // written into the audit log the UI presents as the trust record.
+    val host = normaliseHost(call.request.local.remoteAddress)
     val r = AccessControl.recordRejection(host, detail)
     // One line per host per minute, carrying the count it stands for, so a patient prober cannot
     // scroll a real event out of the 200-entry ring.
@@ -310,6 +328,30 @@ private suspend fun rejected(call: ApplicationCall, kind: String, detail: String
     }
     return r.throttle
 }
+
+/**
+ * Read the request body, giving up as soon as it exceeds [max] bytes.
+ *
+ * Returns null when the cap is passed, having read at most `max + 1` bytes — the point is that an
+ * over-cap body is never fully materialised. Counts BYTES; the old check compared `String.length`,
+ * which is UTF-16 units, against a byte constant.
+ */
+private suspend fun ApplicationCall.receiveBoundedText(max: Long): String? {
+    val channel = receiveChannel()
+    val out = java.io.ByteArrayOutputStream()
+    val chunk = ByteArray(16 * 1024)
+    while (!channel.isClosedForRead) {
+        val n = channel.readAvailable(chunk, 0, chunk.size)
+        if (n <= 0) continue
+        if (out.size() + n > max) return null
+        out.write(chunk, 0, n)
+    }
+    return out.toString(Charsets.UTF_8.name())
+}
+
+/** One peer, one bucket: fold the IPv4-mapped IPv6 form (`::ffff:192.168.1.5`) onto the IPv4 one. */
+private fun normaliseHost(addr: String): String =
+    addr.removePrefix("::ffff:").removeSurrounding("[", "]")
 
 /**
  * Parse `Authorization: Bearer <token>` and resolve it to a client name.

@@ -173,18 +173,41 @@ class ToolSchemaTest {
     }
 
     @Test
-    fun `argument validation throws rather than returning an error string`() {
-        // Found by driving the real MCP Python SDK at the device: `torch {}` came back as
-        // isError:false with the body "provide 'on': …". A handler that *returns* its complaint
-        // produces a SUCCESSFUL tool result whose text merely reads like an error, which a model
-        // has no reliable way to distinguish from a real answer.
-        val offenders = mcpCode.lineSequence()
-            .filter { Regex("""return\s+"(provide|put needs|unknown (action|stream|screen))""").containsMatchIn(it) }
-            .map { it.trim() }
-            .toList()
+    fun `failures are thrown, never returned as an ordinary string`() {
+        // A handler that RETURNS its complaint produces a *successful* tool result whose text
+        // merely reads like an error — isError:false, audited "ok". Found by driving the real MCP
+        // Python SDK (`torch {}` came back isError:false), and then found AGAIN by review: the
+        // first guard regex only matched "provide"/"unknown", so it could not see the nine sites
+        // saying "needs"/"invalid" — several of them on high-impact tools, where the owner has
+        // already approved the call before the handler looks at its arguments.
+        //
+        // So this matches broadly and whitelists the genuine device-state reports instead.
+        val suspicious = Regex("""return\s+"([^"]*)"""")
+        val allowed = listOf(
+            "provider not accessible", "unavailable", "not accessible", "no folders granted",
+            "granted folders are empty", "invalid uri", "cannot open", "refused:",
+            "lat:", "level:", "not available", "no external storage",
+        )
+        val offenders = mcpCode.lineSequence().withIndex().mapNotNull { (i, line) ->
+            val m = suspicious.find(line) ?: return@mapNotNull null
+            val msg = m.groupValues[1]
+            val looksLikeFailure = Regex("(?i)\\b(needs|provide|unknown|invalid|could not|cannot|failed|no app can)\\b")
+                .containsMatchIn(msg)
+            val whitelisted = allowed.any { msg.contains(it, ignoreCase = true) }
+            if (looksLikeFailure && !whitelisted) "  line ${i + 1}: $msg" else null
+        }.toList()
         assertTrue(offenders.isEmpty(),
-            "these return an argument error as a success; throw ToolArgError instead:\n" +
+            "these report a failure as a SUCCESS; throw ToolArgError / ToolExecError instead:\n" +
                 offenders.joinToString("\n"))
+    }
+
+    @Test
+    fun `both failure types are routed to isError and audited distinctly`() {
+        val dispatch = File("src/main/java/com/sixoffive/androidmcp/server/Mcp.kt").readText()
+        assertTrue("INVALID_ARGUMENT" in dispatch, "argument errors need their own audit reason")
+        assertTrue("EXECUTION_ERROR" in dispatch, "execution failures need their own audit reason")
+        // The audit log must be able to separate "you called it wrong" from "the device failed".
+        assertTrue(dispatch.indexOf("is ToolArgError") < dispatch.indexOf("is ToolExecError"))
     }
 
     @Test

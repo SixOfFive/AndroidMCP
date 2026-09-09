@@ -47,35 +47,54 @@ object Elevated {
      *    any downstream `.take(20000)` applies.
      */
     internal fun drain(p: Process, timeoutMs: Long = EXEC_TIMEOUT_MS, cap: Int = MAX_OUTPUT_BYTES): DrainResult {
+        // Close the child's stdin at once. A command that reads stdin (`cat`, `grep foo`) would
+        // otherwise block forever waiting for input nobody is going to send.
+        runCatching { p.outputStream.close() }
+
         val buf = java.io.ByteArrayOutputStream()
-        val chunk = ByteArray(16 * 1024)
-        var truncated = false
-        val deadline = System.currentTimeMillis() + timeoutMs
-        var timedOut = false
-        try {
+        val truncated = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        // The read runs on its own daemon thread and the CALLER waits with a timeout, rather than
+        // the caller doing the blocking read itself.
+        //
+        // Killing the child is not sufficient to unblock a read: `root_shell` runs `sh -c "<cmd>"`,
+        // and any grandchild the command spawns inherits the stdout pipe and holds the write end
+        // open. `destroyForcibly()` reaps the shell, the grandchild lives on, and `read` keeps
+        // blocking — measured: a 1.5 s deadline on `sh -c "sleep 30"` still returned after 30 s.
+        // So the guarantee here is about the CALLER's thread, which is the scarce resource: it is
+        // released on time no matter what the child's descendants do. A leaked reader thread that
+        // exits whenever the pipe finally closes is a far smaller problem than a pinned worker
+        // from the request pool.
+        val reader = Thread {
+            val chunk = ByteArray(16 * 1024)
             val ins = p.inputStream
             while (true) {
-                if (System.currentTimeMillis() > deadline) { timedOut = true; break }
                 val r = try { ins.read(chunk) } catch (_: Throwable) { -1 }
                 if (r < 0) break
-                if (buf.size() + r > cap) {
-                    buf.write(chunk, 0, (cap - buf.size()).coerceAtLeast(0))
-                    truncated = true
-                    break
+                synchronized(buf) {
+                    if (buf.size() + r > cap) {
+                        buf.write(chunk, 0, (cap - buf.size()).coerceAtLeast(0))
+                        truncated.set(true)
+                    } else {
+                        buf.write(chunk, 0, r)
+                    }
                 }
-                buf.write(chunk, 0, r)
+                if (truncated.get()) break
             }
-            if (!timedOut) {
-                val left = (deadline - System.currentTimeMillis()).coerceAtLeast(0)
-                if (!p.waitFor(left, java.util.concurrent.TimeUnit.MILLISECONDS)) timedOut = true
-            }
-        } finally {
-            // Truncation and timeout both leave the child alive with a full pipe; kill it rather
-            // than leaking a process that can never make progress.
-            if (timedOut || truncated) runCatching { p.destroyForcibly() }
-        }
+        }.apply { isDaemon = true; name = "androidmcp-exec-reader"; start() }
+
+        reader.join(timeoutMs)
+        // Timed out only if the reader is still going AND it did not stop because of the cap.
+        val timedOut = reader.isAlive && !truncated.get()
+
+        // Always reap, whatever the outcome. This used to be guarded by `timedOut || truncated`,
+        // so an ordinary command that closed stdout but kept running was left behind every time.
+        runCatching { p.destroyForcibly() }
+        if (!timedOut && !truncated.get()) runCatching { p.waitFor(2, java.util.concurrent.TimeUnit.SECONDS) }
+
+        val bytes = synchronized(buf) { buf.toByteArray() }
         val rc = runCatching { if (timedOut) null else p.exitValue() }.getOrNull()
-        return DrainResult(buf.toByteArray(), truncated, timedOut, rc)
+        return DrainResult(bytes, truncated.get(), timedOut, rc)
     }
 
     internal data class DrainResult(
@@ -86,9 +105,11 @@ object Elevated {
     ) {
         /** Text plus an explicit note when output was cut short, so a caller is never silently lied to. */
         fun text(): String = String(bytes) + when {
+            // Truncation first: when output was capped we stopped reading deliberately, which is a
+            // different thing from the command outrunning its deadline.
+            truncated -> "\n… (truncated at ${MAX_OUTPUT_BYTES / 1024} KB)"
             timedOut -> "\n… (killed after ${EXEC_TIMEOUT_MS / 1000}s — the command did not finish; " +
                 "long-running commands like 'logcat' need a bounded form such as 'logcat -d')"
-            truncated -> "\n… (truncated at ${MAX_OUTPUT_BYTES / 1024} KB)"
             else -> ""
         }
     }

@@ -319,6 +319,26 @@ class McpProtocolTest {
     }
 
     @Test
+    fun `an approval key is scoped to the client and the id's JSON type`() {
+        val AM = com.sixoffive.androidmcp.server.ApprovalManager
+        // notifications/cancelled is neither authenticated against the pending request nor
+        // rate-limited, so keyed on the bare id one client could spray cancellations over ids
+        // 1..100 and deny every other client's pending approvals.
+        assertTrue(AM.rpcKey("laptop", "7", numeric = true) != AM.rpcKey("phone", "7", numeric = true))
+        // ...and JSON-RPC treats numeric 7 and string "7" as different ids.
+        assertTrue(AM.rpcKey("laptop", "7", numeric = true) != AM.rpcKey("laptop", "7", numeric = false))
+        assertEquals(AM.rpcKey("laptop", "7", numeric = true), AM.rpcKey("laptop", "7", numeric = true))
+        // A client name cannot be crafted to collide with another client's key.
+        assertTrue(AM.rpcKey("a", "b", numeric = false) != AM.rpcKey("a\u0000s:b", "", numeric = false))
+    }
+
+    @Test
+    fun `cancelling an id nobody is waiting on is a no-op`() {
+        val AM = com.sixoffive.androidmcp.server.ApprovalManager
+        assertFalse(AM.cancelByRpcId(AM.rpcKey("nobody", "999", numeric = true)))
+    }
+
+    @Test
     fun `unsupported protocol version rejection names what is supported`() {
         val b = json.parseToJsonElement(Mcp.unsupportedProtocolVersion("2099-01-01")).jsonObject
         assertFalse("id" in b)

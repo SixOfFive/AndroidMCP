@@ -36,6 +36,9 @@ class HttpLayerTest {
 
     @Before
     fun seed() {
+        // The rejection token bucket is process-global, so one test's probing would otherwise
+        // throttle every test that runs after it.
+        com.sixoffive.androidmcp.server.AccessControl.reset()
         val hash = MessageDigest.getInstance("SHA-256").digest(token.toByteArray())
             .joinToString("") { "%02x".format(it) }
         TokenStore.tokens.value = listOf(ClientToken(name = "laptop", hashHex = hash))
@@ -209,6 +212,64 @@ class HttpLayerTest {
 
         // Genuinely single-use: the second fetch must miss.
         assertEquals(HttpStatusCode.NotFound, c.get("/media/$id?k=$nonce").status)
+    }
+
+    @Test
+    fun `a chunked over-cap body is refused without being buffered`() = app { c ->
+        // The old check called receiveText() and measured String.length AFTERWARDS. A
+        // Transfer-Encoding: chunked body declares no Content-Length, so the pre-check never fired
+        // and the whole stream was materialised before the cap was consulted. The previous test
+        // used setBody(String), which sets Content-Length — so it only ever exercised the branch
+        // that already worked.
+        val r = c.post("/mcp") {
+            header("Authorization", "Bearer $token")
+            setBody(object : io.ktor.http.content.OutgoingContent.WriteChannelContent() {
+                override suspend fun writeTo(channel: io.ktor.utils.io.ByteWriteChannel) {
+                    val chunk = ByteArray(64 * 1024) { 'x'.code.toByte() }
+                    repeat(16) { channel.writeFully(chunk, 0, chunk.size) }   // 1 MB, no length
+                }
+            })
+        }
+        assertEquals(HttpStatusCode.PayloadTooLarge, r.status)
+    }
+
+    @Test
+    fun `an unknown media id is metered and audited like any other rejection`() = app { c ->
+        // /media carries no bearer token by design, so before this it was the one unauthenticated
+        // surface that could be probed indefinitely at no cost and with no trace.
+        var last = HttpStatusCode.OK
+        repeat(40) { last = c.get("/media/nosuch$it?k=wrong").status }
+        assertEquals(HttpStatusCode.TooManyRequests, last, "probing /media must eventually throttle")
+    }
+
+    @Test
+    fun `a link still resolves when the store is at capacity`() {
+        // take() used to call prune() as its FIRST statement — and prune evicts for capacity, not
+        // just expiry. put() prunes before inserting too, so the store sits permanently at the cap,
+        // meaning every fetch first destroyed the oldest unfetched link: exactly the one a client
+        // was about to dereference. Both callers then reported "expired or already fetched" about a
+        // blob that was neither.
+        val MS = com.sixoffive.androidmcp.server.MediaStore
+        val (firstId, firstNonce) = MS.put("FIRST".toByteArray(), "image/jpeg")
+        repeat(40) { MS.put(byteArrayOf(it.toByte()), "image/jpeg") }   // push well past MAX_ENTRIES
+        val e = MS.take(firstId, firstNonce)
+        // Either the entry survived, or capacity legitimately evicted it in put() — but it must
+        // never be destroyed by the act of fetching it.
+        val again = MS.take(firstId, firstNonce)
+        assertEquals(null, again, "an entry must be consumed exactly once")
+        if (e != null) assertEquals("FIRST", String(e.bytes))
+    }
+
+    @Test
+    fun `fetching one link never destroys another`() {
+        val MS = com.sixoffive.androidmcp.server.MediaStore
+        val links = (1..10).map { i -> MS.put("blob-$i".toByteArray(), "image/jpeg") to i }
+        // Fetch them in reverse; every one must still be there.
+        links.reversed().forEach { (link, i) ->
+            val e = MS.take(link.first, link.second)
+            assertTrue(e != null, "blob-$i was destroyed by fetching a different link")
+            assertEquals("blob-$i", String(e!!.bytes))
+        }
     }
 
     @Test

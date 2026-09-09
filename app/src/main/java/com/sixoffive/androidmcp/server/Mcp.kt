@@ -40,6 +40,16 @@ import java.util.concurrent.TimeUnit
  */
 internal class ToolArgError(message: String) : Exception(message)
 
+/**
+ * A tool ran but could not do its job — the app is not installed, DND blocks the volume change,
+ * the calendar is not writable.
+ *
+ * Distinct from [ToolArgError] (the caller is at fault) and from an unexpected throwable (the code
+ * is at fault). Like ToolArgError, these were `return`ed as ordinary strings, so a failure reached
+ * the client as `isError:false` and was written to the audit log as "ok".
+ */
+internal class ToolExecError(message: String) : Exception(message)
+
 /** Hand-rolled MCP JSON-RPC handler over Streamable HTTP. */
 object Mcp {
     /** The one protocol revision this server implements. `initialize` negotiates against this set. */
@@ -87,9 +97,13 @@ object Mcp {
             // The one notification with an effect: withdraw a pending approval so a late "Allow"
             // tap cannot fire the camera for a call the client already abandoned.
             if (method == "notifications/cancelled") {
-                val cancelled = ((root["params"] as? JsonObject)?.get("requestId"))
-                    ?.let { (it as? JsonPrimitive)?.contentOrNull }
-                if (cancelled != null && ApprovalManager.cancelByRpcId(cancelled)) {
+                val raw = (root["params"] as? JsonObject)?.get("requestId") as? JsonPrimitive
+                val cancelled = raw?.contentOrNull
+                // Scoped to the CLIENT that sent the cancellation, and type-tagged, so one client
+                // cannot withdraw another's pending approvals by guessing ids.
+                if (cancelled != null &&
+                    ApprovalManager.cancelByRpcId(ApprovalManager.rpcKey(client, cancelled, !raw.isString))
+                ) {
                     AuditLog.record("approval", client, false, "CANCELLED_BY_CLIENT: request $cancelled")
                 }
             }
@@ -250,8 +264,10 @@ object Mcp {
                 result(id, refusalResult(cap, gate))
             }
             GateResult.Allowed -> {
-                // Pass the JSON-RPC id so notifications/cancelled can withdraw this approval.
-                if (!ApprovalManager.require(ctx, cap, client, (id as? JsonPrimitive)?.contentOrNull)) {
+                // Pass the (client, id) key so notifications/cancelled can withdraw this approval.
+                val rpcKey = (id as? JsonPrimitive)?.contentOrNull
+                    ?.let { ApprovalManager.rpcKey(client, it, !(id as JsonPrimitive).isString) }
+                if (!ApprovalManager.require(ctx, cap, client, rpcKey)) {
                     AuditLog.record(cap.id, client, false, "REQUIRES_USER_APPROVAL")
                     return result(id, approvalRefusal(cap))
                 }
@@ -268,6 +284,11 @@ object Mcp {
                             // verbatim, but as isError so the model cannot read it as success.
                             AuditLog.record(cap.id, client, false, "INVALID_ARGUMENT: ${t.message}")
                             result(id, errorResult(t.message ?: "invalid arguments"))
+                        } else if (t is ToolExecError) {
+                            // The tool ran and failed for a device-state reason it can explain.
+                            // Pass the message through verbatim — it already names the fix.
+                            AuditLog.record(cap.id, client, false, "EXECUTION_ERROR: ${t.message}")
+                            result(id, errorResult(t.message ?: "the tool could not complete"))
                         } else {
                             val why = "${t::class.java.simpleName}: ${t.message}"
                             AuditLog.record(cap.id, client, false, "EXECUTION_ERROR: $why")
@@ -1005,7 +1026,7 @@ object Mcp {
                 pm.getInstalledApplications(0)
             }
         } catch (t: Throwable) {
-            return "could not list installed apps: ${t.message}"
+            throw ToolExecError("could not list installed apps: ${t.message}")
         }
         val systemMask = android.content.pm.ApplicationInfo.FLAG_SYSTEM or
             android.content.pm.ApplicationInfo.FLAG_UPDATED_SYSTEM_APP
@@ -1046,16 +1067,16 @@ object Mcp {
         val uri = try {
             android.net.Uri.parse(normalized)
         } catch (t: Throwable) {
-            return "invalid url: ${t.message}"
+            throw ToolArgError("invalid url: ${t.message}")
         }
         val intent = Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         return try {
             ctx.startActivity(intent)
             "opened $normalized (note: Android may block launching activities while androidmcp is in the background)"
         } catch (t: android.content.ActivityNotFoundException) {
-            "no app can handle $normalized"
+            throw ToolExecError("no app can handle $normalized")
         } catch (t: Throwable) {
-            "could not open $normalized: ${t.message}"
+            throw ToolExecError("could not open $normalized: ${t.message}")
         }
     }
 
@@ -1199,18 +1220,18 @@ object Mcp {
 
         val cmd: String = when (action) {
             "tap" -> {
-                if (x == null || y == null) return "tap needs integer 'x' and 'y'"
+                if (x == null || y == null) throw ToolArgError("tap needs integer 'x' and 'y'")
                 "input tap $x $y"
             }
             "swipe" -> {
                 if (x == null || y == null || x2 == null || y2 == null)
-                    return "swipe needs integer 'x', 'y', 'x2', and 'y2'"
+                    throw ToolArgError("swipe needs integer 'x', 'y', 'x2', and 'y2'")
                 "input swipe $x $y $x2 $y2 300"
             }
             "text" -> {
                 val t = args["text"]?.jsonPrimitive?.contentOrNull
-                    ?: return "text action needs a 'text' argument"
-                if (t.isEmpty()) return "text action needs a non-empty 'text' argument"
+                    ?: throw ToolArgError("text action needs a 'text' argument")
+                if (t.isEmpty()) throw ToolArgError("text action needs a non-empty 'text' argument")
                 // 'input text' word-splits on spaces and maps the literal %s back to a space,
                 // so encode spaces as %s, then single-quote so every other shell metacharacter
                 // ($, `, ;, &, |, (), quotes) is passed literally and cannot spawn a subshell.
@@ -1218,10 +1239,10 @@ object Mcp {
             }
             "key" -> {
                 val raw = args["keycode"]?.jsonPrimitive?.contentOrNull?.trim()
-                    ?: return "key action needs a 'keycode' (a number like 4, or a name like KEYCODE_BACK)"
+                    ?: throw ToolArgError("key action needs a 'keycode' (a number like 4, or a name like KEYCODE_BACK)")
                 val key = raw.uppercase()
                 val valid = key.matches(Regex("^\\d+$")) || key.matches(Regex("^KEYCODE_[A-Z0-9_]+$"))
-                if (!valid) return "invalid keycode '$raw' — use a numeric code (e.g. 4) or a KEYCODE_ name (e.g. KEYCODE_BACK)"
+                if (!valid) throw ToolArgError("invalid keycode '$raw' — use a numeric code (e.g. 4) or a KEYCODE_ name (e.g. KEYCODE_BACK)")
                 "input keyevent $key"
             }
             else -> throw ToolArgError("unknown action '$action' — use tap, swipe, text, or key")
@@ -1266,7 +1287,7 @@ object Mcp {
             ?: throw ToolArgError("provide an integer 'level'")
         val showUi = args["show_ui"]?.jsonPrimitive?.booleanOrNull ?: false
         val max = runCatching { am.getStreamMaxVolume(streamConst) }.getOrDefault(-1)
-        if (max < 0) return "could not read the max volume for the $streamName stream"
+        if (max < 0) throw ToolExecError("could not read the max volume for the $streamName stream")
         val old = runCatching { am.getStreamVolume(streamConst) }.getOrDefault(-1)
         val target = level.coerceIn(0, max)
         val flags = if (showUi) android.media.AudioManager.FLAG_SHOW_UI else 0
@@ -1279,7 +1300,7 @@ object Mcp {
                 if (now != target) append("; system settled on $now (a DND/ringer policy, ring/notification coupling, or a fixed-volume output such as some Bluetooth/HDMI sinks can override the request)")
             }
         } catch (t: SecurityException) {
-            "could not set $streamName volume: ${t.message ?: "Notification Policy access required"} — this usually means Do Not Disturb is active; changing ring/notification volume (or dropping it to 0) while DND is on needs Notification Policy (DND) access"
+            throw ToolExecError("could not set $streamName volume: ${t.message ?: "Notification Policy access required"} — this usually means Do Not Disturb is active; changing ring/notification volume (or dropping it to 0) while DND is on needs Notification Policy (DND) access")
         } catch (t: Throwable) {
             "could not set $streamName volume: ${t.message ?: t.javaClass.simpleName}"
         }
@@ -1319,7 +1340,7 @@ object Mcp {
                 )
             }
         } catch (t: Throwable) {
-            "could not dispatch media key '$action': ${t.message ?: t.javaClass.simpleName}"
+            throw ToolExecError("could not dispatch media key '$action': ${t.message ?: t.javaClass.simpleName}")
         }
     }
 
@@ -1413,10 +1434,10 @@ object Mcp {
                 ctx.startActivity(Intent(android.provider.Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 "no dedicated '$screen' screen on this device — opened the main Settings app instead"
             } catch (t2: Throwable) {
-                "could not open settings: ${t2.message}"
+                throw ToolExecError("could not open settings: ${t2.message}")
             }
         } catch (t: Throwable) {
-            "could not open the '$screen' settings screen: ${t.message}"
+            throw ToolExecError("could not open the '$screen' settings screen: ${t.message}")
         }
     }
 
@@ -1453,7 +1474,7 @@ object Mcp {
                 ctx.contentResolver.query(
                     android.provider.CalendarContract.Calendars.CONTENT_URI, projection, sel, null, order)
             }.getOrNull()
-                ?: return "could not enumerate calendars - this needs READ_CALENDAR granted, or pass an explicit 'calendar_id'"
+                ?: throw ToolExecError("could not enumerate calendars - this needs READ_CALENDAR granted, or pass an explicit 'calendar_id'")
             var found = -1L
             cur.use { c ->
                 val idIx = c.getColumnIndex(android.provider.CalendarContract.Calendars._ID)
@@ -1481,8 +1502,8 @@ object Mcp {
         val uri = try {
             ctx.contentResolver.insert(android.provider.CalendarContract.Events.CONTENT_URI, values)
         } catch (t: Throwable) {
-            return "could not create event: ${t.message} (calendar_id $calendarId may not be writable, or WRITE_CALENDAR is not granted)"
-        } ?: return "insert returned no URI - calendar_id $calendarId may be invalid or not writable"
+            throw ToolExecError("could not create event: ${t.message} (calendar_id $calendarId may not be writable, or WRITE_CALENDAR is not granted)")
+        } ?: throw ToolExecError("insert returned no URI - calendar_id $calendarId may be invalid or not writable")
 
         val newId = uri.lastPathSegment ?: "?"
         val fmt = java.text.SimpleDateFormat("EEE MMM d yyyy, HH:mm", java.util.Locale.US)
@@ -1556,7 +1577,7 @@ object Mcp {
         val ns = args["namespace"]?.jsonPrimitive?.contentOrNull?.trim()?.lowercase()
             ?: throw ToolArgError("provide 'namespace': system, secure, or global")
         if (ns != "system" && ns != "secure" && ns != "global")
-            return "invalid namespace '$ns' — use system, secure, or global"
+            throw ToolArgError("invalid namespace '$ns' — use system, secure, or global")
         val key = args["key"]?.jsonPrimitive?.contentOrNull?.trim()
             ?: throw ToolArgError("provide a 'key'")
         if (key.isEmpty()) throw ToolArgError("provide a non-empty 'key'")

@@ -41,7 +41,14 @@ object MediaStore {
      * — let anyone delete every pending blob.
      */
     fun take(id: String, nonce: String): Entry? {
-        prune()
+        // sweepExpired, NOT prune: prune() also evicts for CAPACITY, and running it here destroyed
+        // a live blob on the way to fetching one. put() prunes before inserting too, so the store
+        // sits permanently at MAX_ENTRIES — meaning at capacity every take() evicted the oldest
+        // unfetched link, the very one a client was about to dereference. Both callers then
+        // reported "expired or already fetched" about a blob that was neither. And because it ran
+        // before the nonce compare, it broke the documented "a bad guess must not evict" rule on a
+        // route that carries no bearer token.
+        sweepExpired()
         val e = map[id] ?: return null
         if (e.expiresAt < System.currentTimeMillis()) { map.remove(id); return null }
         if (!constantTimeEquals(e.nonce, nonce)) return null // a bad guess must not evict
@@ -49,15 +56,22 @@ object MediaStore {
     }
 
     /** Test/diagnostic: how many blobs are currently held. */
-    fun size(): Int { prune(); return map.size }
+    fun size(): Int { sweepExpired(); return map.size }
 
-    private fun prune() {
+    /** Drop entries past their TTL. Safe anywhere — it never touches a live blob. */
+    private fun sweepExpired() {
         val now = System.currentTimeMillis()
         map.entries.removeIf { it.value.expiresAt < now }
-        if (map.size >= MAX_ENTRIES) {
-            // Ids are random now, so evict by actual age rather than by id ordering.
+    }
+
+    /** Sweep, then make room for one more. Only [put] may do this: discarding a live blob is only
+     *  acceptable when the alternative is refusing to store the new one. */
+    private fun prune() {
+        sweepExpired()
+        if (map.size > MAX_ENTRIES - 1) {
+            // Ids are random, so evict by actual age rather than by id ordering.
             map.entries.sortedBy { it.value.expiresAt }
-                .take((map.size - MAX_ENTRIES) + 1)
+                .take(map.size - (MAX_ENTRIES - 1))
                 .forEach { map.remove(it.key) }
         }
     }

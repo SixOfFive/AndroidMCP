@@ -35,8 +35,19 @@ object ApprovalManager {
 
     private val pending = ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
 
-    /** JSON-RPC request id -> internal approval id, so `notifications/cancelled` can cancel one. */
+    /**
+     * (client, request id) -> internal approval id, so `notifications/cancelled` can cancel one.
+     *
+     * Keyed by CLIENT as well as id: several named client tokens is a designed feature, JSON-RPC
+     * ids are per-connection, and `notifications/cancelled` is neither authenticated against the
+     * pending request nor rate-limited. Keyed on the bare id, client B could spray cancellations
+     * over ids 1..100 and deny every other client's pending approvals.
+     */
     private val byRpcId = ConcurrentHashMap<String, String>()
+
+    /** Type-tagged so numeric `7` and string `"7"` are different requests, as JSON-RPC intends. */
+    fun rpcKey(client: String, rpcId: String, numeric: Boolean): String =
+        "$client\u0000${if (numeric) "n" else "s"}:$rpcId"
     private val armedUntil = ConcurrentHashMap<String, Long>()
     private val counter = AtomicInteger(1000)
 
@@ -45,13 +56,15 @@ object ApprovalManager {
     fun disarm(capId: String) { armedUntil.remove(capId) }
 
     /** True if the call may proceed. Blocks on the human for high-impact, un-armed tools. */
-    suspend fun require(ctx: Context, cap: CapabilityMeta, client: String, rpcId: String? = null): Boolean {
+    suspend fun require(ctx: Context, cap: CapabilityMeta, client: String, rpcKey: String? = null): Boolean {
         if (!cap.highImpact) return true
         if (isArmed(cap.id)) return true
         val id = "req-${counter.incrementAndGet()}"
         val deferred = CompletableDeferred<Boolean>()
         pending[id] = deferred
-        rpcId?.let { byRpcId[it] = id }
+        // putIfAbsent, not put: a duplicate id from the same client must not silently steal the
+        // mapping of an approval that is still pending.
+        rpcKey?.let { byRpcId.putIfAbsent(it, id) }
         postPrompt(ctx, id, cap, client)
         return try {
             withTimeoutOrNull(TIMEOUT_MS) { deferred.await() } ?: false
@@ -60,7 +73,8 @@ object ApprovalManager {
             // cancelled — leaving a live consent prompt orphaned in the notification shade for a
             // request nobody is waiting on any more.
             pending.remove(id)
-            rpcId?.let { byRpcId.remove(it) }
+            // Two-argument remove: only drop the mapping if it is still OURS.
+            rpcKey?.let { byRpcId.remove(it, id) }
             nm(ctx).cancel(notifId(id))
         }
     }
@@ -72,8 +86,8 @@ object ApprovalManager {
      * the tool never runs — otherwise a late "Allow" tap could still fire the camera for a call
      * the client abandoned minutes ago.
      */
-    fun cancelByRpcId(rpcId: String): Boolean {
-        val internal = byRpcId.remove(rpcId) ?: return false
+    fun cancelByRpcId(rpcKey: String): Boolean {
+        val internal = byRpcId.remove(rpcKey) ?: return false
         pending.remove(internal)?.complete(false)
         return true
     }
