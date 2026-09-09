@@ -26,13 +26,21 @@ import java.security.spec.PKCS8EncodedKeySpec
 object TlsKeystore {
     const val ALIAS = "androidmcp"
     val PW: CharArray = "androidmcp".toCharArray()
-    private const val CERT_FILE = "mcp-tls.crt"
-    private const val KEY_FILE = "mcp-tls.key"
+    internal const val CERT_FILE = "mcp-tls.crt"
+    internal const val KEY_FILE = "mcp-tls.key"
 
-    fun loadOrCreate(ctx: Context): KeyStore {
-        val cf = File(ctx.filesDir, CERT_FILE)
-        val kf = File(ctx.filesDir, KEY_FILE)
-        val wanted = subjectAddresses()
+    /**
+     * Android entry point. The real logic lives in the [File] overload below — `Context` is used
+     * here for exactly one thing, `filesDir`, and splitting it out puts the persist / reload /
+     * re-issue / atomic-commit behaviour inside the JVM test suite instead of leaving it to manual
+     * device checks.
+     */
+    fun loadOrCreate(ctx: Context): KeyStore = loadOrCreate(ctx.filesDir)
+
+    internal fun loadOrCreate(dir: File, addresses: List<String> = subjectAddresses()): KeyStore {
+        val cf = File(dir, CERT_FILE)
+        val kf = File(dir, KEY_FILE)
+        val wanted = addresses
         if (cf.exists() && kf.exists()) {
             val loaded = runCatching {
                 val cert = CertificateFactory.getInstance("X.509").generateCertificate(cf.inputStream())
@@ -43,6 +51,13 @@ object TlsKeystore {
                 cert.checkValidity()
                 require(covers(cert, wanted)) { "cert has no SAN for ${wanted.joinToString()}" }
                 val key = KeyFactory.getInstance("RSA").generatePrivate(PKCS8EncodedKeySpec(kf.readBytes()))
+                // The two files must actually belong together. Nothing above checks that, and
+                // neither does KeyStore.setKeyEntry — so a cert stored beside a mismatched key
+                // loads perfectly and is then served, and EVERY handshake fails while the app
+                // reports the server as running. The atomic commit below stops us creating such a
+                // pair; this stops us serving one that already exists, from an older build or any
+                // other cause. Re-issuing is always safe: the worst case is a changed fingerprint.
+                require(keyMatchesCert(key, cert)) { "stored key does not match stored certificate" }
                 keystoreOf(key, arrayOf(cert))
             }.getOrNull()
             if (loaded != null) return loaded
@@ -51,11 +66,13 @@ object TlsKeystore {
             // changing the fingerprint the owner may have pinned in a client.
             AuditLog.record(
                 "tls", "local", true,
-                "re-issuing certificate (expired, or no SAN for ${wanted.joinToString()}) — " +
+                "re-issuing certificate (expired, unreadable, key/cert mismatch, or no SAN for " +
+                    "${wanted.joinToString()}) — " +
                     "the pinned SHA-256 will change",
             )
         }
         // Generate a fresh self-signed cert+key, persist the DER, and build the keystore.
+        dir.mkdirs()
         val gen = generate(wanted)
         val key = gen.getKey(ALIAS, PW) as PrivateKey
         val chain: Array<Certificate> = gen.getCertificateChain(ALIAS)
@@ -104,6 +121,13 @@ object TlsKeystore {
     private fun subjectAddresses(): List<String> =
         (listOf("127.0.0.1") + listOfNotNull(Net.lanAddress(), Net.tailnetAddress())).distinct()
 
+    /** Is [key] the private half of [cert]'s public key? Compares the RSA modulus — exact and cheap. */
+    private fun keyMatchesCert(key: PrivateKey, cert: java.security.cert.X509Certificate): Boolean {
+        val pub = cert.publicKey as? java.security.interfaces.RSAPublicKey ?: return false
+        val priv = key as? java.security.interfaces.RSAPrivateKey ?: return false
+        return pub.modulus == priv.modulus
+    }
+
     /** Does [cert]'s subjectAltName list cover every address in [wanted]? */
     private fun covers(cert: java.security.cert.X509Certificate, wanted: List<String>): Boolean {
         val sans = runCatching { cert.subjectAlternativeNames }.getOrNull().orEmpty()
@@ -118,8 +142,10 @@ object TlsKeystore {
         }
 
     /** SHA-256 fingerprint (colon-hex) of the persisted cert, or null if not generated yet. */
-    fun fingerprintSha256(ctx: Context): String? = runCatching {
-        val cf = File(ctx.filesDir, CERT_FILE)
+    fun fingerprintSha256(ctx: Context): String? = fingerprintSha256(ctx.filesDir)
+
+    internal fun fingerprintSha256(dir: File): String? = runCatching {
+        val cf = File(dir, CERT_FILE)
         if (!cf.exists()) return null
         val cert = CertificateFactory.getInstance("X.509").generateCertificate(cf.inputStream())
         MessageDigest.getInstance("SHA-256").digest(cert.encoded).joinToString(":") { "%02X".format(it) }

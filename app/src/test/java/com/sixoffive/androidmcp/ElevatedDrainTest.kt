@@ -96,8 +96,7 @@ class ElevatedDrainTest {
         // stdout but kept running was left behind on every ordinary call.
         val p = sh("echo done")
         Elevated.drain(p)
-        assertTrue(p.waitFor(2, TimeUnit.SECONDS), "process must not still be running after drain")
-        assertFalse(p.isAlive)
+        assertTrue(p.waitFor(5, TimeUnit.SECONDS), "process must not still be running after drain")
     }
 
     @Test
@@ -114,6 +113,8 @@ class ElevatedDrainTest {
         assertTrue(String(r.bytes).startsWith("early"))
         assertTrue(r.timedOut)
         assertTrue(elapsed < 10_000, "waited ${elapsed}ms — should be bounded by the 2s deadline, not the 30s sleep")
-        assertFalse(p.isAlive, "the lingering child must be reaped")
+        // waitFor, not isAlive: destroyForcibly() only *requests* termination, so checking
+        // liveness on the next line is a race against the OS reaping the process. This flaked.
+        assertTrue(p.waitFor(5, TimeUnit.SECONDS), "the lingering child must be reaped")
     }
 }
