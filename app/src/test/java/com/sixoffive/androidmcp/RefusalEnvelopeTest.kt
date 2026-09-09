@@ -51,6 +51,30 @@ class RefusalEnvelopeTest {
     }
 
     @Test
+    fun `structured results also carry the serialized JSON as text`() {
+        // Spec: "For backwards compatibility, a tool that returns structured content SHOULD also
+        // return the serialized JSON in a TextContent block." Both refusal envelopes previously
+        // returned structuredContent beside only a human sentence, so a client reading just
+        // `content` — every client predating structured content — lost all the gate detail.
+        val fn = mcpKt.substringAfter("private fun structuredResult(").substringBefore("\n    private fun refusalResult")
+        assertTrue("add(textBlk(structured.toString()))" in fn,
+            "structuredResult must emit the serialized JSON as a second text block")
+        // ...and both envelopes must go through it rather than hand-rolling their own content array.
+        assertTrue("refusalResult(cap: CapabilityMeta, d: GateResult.Denied): JsonObject = structuredResult(" in mcpKt)
+        assertTrue("approvalRefusal(cap: CapabilityMeta): JsonObject = structuredResult(" in mcpKt)
+    }
+
+    @Test
+    fun `no tool declares an outputSchema while refusals use structuredContent`() {
+        // The spec's rule is unconditional: "If an output schema is provided: Servers MUST provide
+        // structured results that conform to this schema." This server's most common result is a
+        // REFUSAL whose structuredContent is the gate-diagnostic shape, not the tool's output — so
+        // declaring an outputSchema anywhere would put it in breach on nearly every call.
+        // Revisit only by first moving the refusal payload out of structuredContent.
+        assertTrue("outputSchema" !in mcpKt, "see the comment: outputSchema conflicts with the refusal envelope")
+    }
+
+    @Test
     fun `the refusal envelope carries every field the README documents`() {
         val envelope = mcpKt.substringAfter("private fun refusalResult(").substringBefore("\n    }")
         listOf(

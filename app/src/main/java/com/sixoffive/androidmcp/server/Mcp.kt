@@ -399,11 +399,28 @@ object Mcp {
         put("isError", true)
     }
 
-    private fun refusalResult(cap: CapabilityMeta, d: GateResult.Denied): JsonObject = buildJsonObject {
-        putJsonArray("content") {
-            add(buildJsonObject { put("type", "text"); put("text", "${cap.title} is not available. ${d.remediation}") })
+    /**
+     * A result carrying both prose and machine-readable structure.
+     *
+     * The spec: "For backwards compatibility, a tool that returns structured content SHOULD also
+     * return the serialized JSON in a TextContent block." Both refusal envelopes previously
+     * returned `structuredContent` with only a human sentence beside it, so a client that reads
+     * only `content` — which is every client predating structured content — saw the remediation
+     * but none of the machine-readable gate detail.
+     */
+    private fun structuredResult(prose: String, structured: JsonObject, isError: Boolean): JsonObject =
+        buildJsonObject {
+            putJsonArray("content") {
+                add(textBlk(prose))
+                add(textBlk(structured.toString()))
+            }
+            put("structuredContent", structured)
+            put("isError", isError)
         }
-        putJsonObject("structuredContent") {
+
+    private fun refusalResult(cap: CapabilityMeta, d: GateResult.Denied): JsonObject = structuredResult(
+        "${cap.title} is not available. ${d.remediation}",
+        buildJsonObject {
             put("status", "capability_disabled")
             put("capability", cap.id)
             put("reason_code", d.reason.name)
@@ -416,18 +433,13 @@ object Mcp {
             put("data_exposed", cap.dataExposed)
             put("remediation", d.remediation)
             put("retriable", d.retriable)
-        }
-        put("isError", true)
-    }
+        },
+        isError = true,
+    )
 
-    private fun approvalRefusal(cap: CapabilityMeta): JsonObject = buildJsonObject {
-        putJsonArray("content") {
-            add(buildJsonObject {
-                put("type", "text")
-                put("text", "${cap.title} needs your approval on the device. Approve the prompt (or arm the capability in the app), then retry.")
-            })
-        }
-        putJsonObject("structuredContent") {
+    private fun approvalRefusal(cap: CapabilityMeta): JsonObject = structuredResult(
+        "${cap.title} needs your approval on the device. Approve the prompt (or arm the capability in the app), then retry.",
+        buildJsonObject {
             put("status", "requires_user_approval")
             put("capability", cap.id)
             put("reason_code", "REQUIRES_USER_APPROVAL")
@@ -436,9 +448,9 @@ object Mcp {
             put("data_exposed", cap.dataExposed)
             put("remediation", "High-impact tool: approve the on-device notification prompt, or arm this capability, then retry.")
             put("retriable", true)
-        }
-        put("isError", true)
-    }
+        },
+        isError = true,
+    )
 
     /**
      * Which gate actually failed, as a machine-readable token.

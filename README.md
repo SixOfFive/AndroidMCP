@@ -19,7 +19,7 @@ connect at all are the server switch and a client token.
 > capabilities, the double gate, per-call approval, token auth, the config UI, and the
 > installer are built and tested on real hardware (a Samsung Galaxy A03s and a Unisoc tablet),
 > including live cross-machine connections over **LAN** and **Tailscale**. The JSON-RPC and
-> HTTP layers are covered by **99 JVM unit tests**, and it is **driven end to end by two real MCP
+> HTTP layers are covered by **101 JVM unit tests**, and it is **driven end to end by two real MCP
 > clients** — the official MCP Python SDK and Claude Code itself. See [Caveats](#caveats).
 
 ---
@@ -313,7 +313,7 @@ tailnet-connected machine rather than exposing it publicly.
 ## Caveats
 
 The v1 roadmap is done and the transport has since been pinned to the MCP spec and covered
-by **99 JVM unit tests** (`./gradlew :app:testDebugUnitTest`). Remaining rough edges:
+by **101 JVM unit tests** (`./gradlew :app:testDebugUnitTest`). Remaining rough edges:
 
 - **Two real clients have connected**: the official MCP Python SDK 2.2.0 and Claude Code 2.1.251
   (which negotiates down from its own newer revision). Claude Desktop and the MCP Inspector have
@@ -390,7 +390,7 @@ The v1 list below was fully checked off; this is its successor.
       `limit:-1` made a full inbox report "no messages" and made `read_notifications` throw;
       `set_volume` rejected the `voice_call` stream that `volume_info` advertises; `take_photo`
       echoed a camera it had not used; `post_notification` silently posted `"(no text)"`.
-- [x] **99 JVM unit tests** — the first in the project. Protocol conformance, the HTTP layer
+- [x] **101 JVM unit tests** — the first in the project. Protocol conformance, the HTTP layer
       (auth, DNS-rebinding guard, CORS, version header, body cap, media nonce), SAF containment,
       TLS cert properties, registry invariants, and schema quality gates. `installRoutes` takes
       the handler as a lambda so the whole HTTP layer runs under `testApplication` with no device.
@@ -443,12 +443,9 @@ The v1 list below was fully checked off; this is its successor.
 - [x] **Media links are built from the config the listener actually bound**, not live config —
       bind and TLS can be toggled without restarting the server, which produced links pointing at
       an address the running listener never bound.
-
-**Open:**
-
 - [x] **Claude Code drives it.** `claude mcp add --transport http phone http://<host>:8765/mcp
-      --header "Authorization: Bearer <TOKEN>"` → **✔ Connected**. Its handshake is worth knowing,
-      captured with a logging proxy in front of the device:
+      --header "Authorization: Bearer <TOKEN>"` → **✔ Connected**. Its handshake, captured with a
+      logging proxy in front of the device:
       1. `POST server/discover` with `mcp-protocol-version: 2026-07-28` — a **dual-era probe**.
          This server answers **400** naming `data.supported`, and Claude Code falls back.
       2. `POST initialize` with `protocolVersion: "2025-11-25"` and **no version header** — the
@@ -457,15 +454,34 @@ The v1 list below was fully checked off; this is its successor.
          tolerated · `tools/list` → 24 KB of schemas, parsed.
       Answering the probe with **400 rather than 404** is what makes the fallback work; a 404
       would also have contradicted the revision this server does declare.
-- [ ] **Claude Desktop and the MCP Inspector** have not been tried.
-- [ ] **`outputSchema` + `structuredContent` on success.** Tools return prose a model must parse.
-      Declaring an `outputSchema` puts the server in breach of a MUST on every call that does not
-      then return conforming structured output, so it is all-or-nothing per tool.
-- [ ] **No SSE stream** (`GET /mcp` is a 405, which the spec permits), so there is no channel for
-      `tools/list_changed` or progress notifications.
-- [ ] **Re-test the browser dashboard against the Origin allowlist.** A `file://` page sends
-      `Origin: null` and still works, but a dashboard served over http from a non-local origin now
-      has to be added in the app.
+- [x] **The browser dashboard still works under the Origin allowlist.** Verified the full CORS
+      handshake a `file://` page needs: preflight → 204 with `Access-Control-Allow-Origin: null`,
+      the POST → 200 with a matching header and `Vary: Origin`, and `https://evil.example` → 403.
+      (The in-app preview pane cannot itself reach the LAN — `ERR_BLOCKED_BY_CLIENT` — so the
+      handshake was verified directly rather than through that sandbox.)
+- [x] **Structured results carry the serialized JSON too.** The spec: *"a tool that returns
+      structured content SHOULD also return the serialized JSON in a TextContent block."* Both
+      refusal envelopes returned `structuredContent` beside only a human sentence, so a client
+      reading just `content` — every client predating structured content — got the remediation but
+      none of the machine-readable gate detail. Both now go through one `structuredResult` helper.
+
+**Open, and decisions taken:**
+
+- [ ] **Claude Desktop and the MCP Inspector.** The Inspector needs `npx`; this machine has bare
+      `node` with no npm, and Debian's `corepack` is broken (`MODULE_NOT_FOUND`), so trying it
+      needs `sudo apt install npm` first. Claude Desktop dials from Anthropic's servers and would
+      need the `mcp-remote` bridge.
+- [x] **`outputSchema` — deliberately NOT declared, on the spec's own terms.** The rule is
+      unconditional: *"If an output schema is provided: Servers MUST provide structured results
+      that conform to this schema."* There is no carve-out for errors. This server's **most common
+      result is a refusal**, whose `structuredContent` is the gate diagnostic (`reason_code`,
+      `gate_failed`, `remediation`, …) rather than the tool's output — so declaring an
+      `outputSchema` anywhere would put the server in breach on nearly every call. Revisit only by
+      first moving the refusal payload out of `structuredContent`, which would break the documented
+      contract for a marginal gain. A test asserts no `outputSchema` appears while that holds.
+- [ ] **No SSE stream** (`GET /mcp` is a 405, which the spec permits), so no channel for
+      `tools/list_changed` or progress notifications. Claude Code tolerates the 405; revisit only
+      if a real client demands it.
 
 ### v1 — feature completeness *(done)*
 
