@@ -40,6 +40,7 @@ class McpProtocolTest {
         is Mcp.Reply.Body -> json.parseToJsonElement(reply.json).jsonObject
         is Mcp.Reply.Rejected -> json.parseToJsonElement(reply.json).jsonObject
         Mcp.Reply.None -> error("expected a body, got a notification")
+        is Mcp.Reply.Streamed -> error("expected a body, got a stream")
     }
 
     private fun errorCode(reply: Mcp.Reply): Int =

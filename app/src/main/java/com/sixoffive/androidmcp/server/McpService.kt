@@ -31,6 +31,7 @@ import io.ktor.server.request.contentLength
 import io.ktor.server.request.receiveChannel
 import io.ktor.server.response.respondBytes
 import io.ktor.server.response.respondText
+import io.ktor.server.response.respondTextWriter
 import io.ktor.server.routing.get
 import io.ktor.server.routing.options
 import io.ktor.server.routing.post
@@ -110,12 +111,12 @@ class McpService : Service() {
                         this.host = host
                         this.port = port
                     }
-                    module { installRoutes { b, c, v -> Mcp.handle(applicationContext, b, c, v) } }
+                    module { installRoutes { b, c, v, sse -> Mcp.handle(applicationContext, b, c, v, sse) } }
                 }
                 embeddedServer(io.ktor.server.netty.Netty, env).start(wait = false)
             } else {
                 embeddedServer(CIO, host = host, port = port) {
-                    installRoutes { b, c, v -> Mcp.handle(applicationContext, b, c, v) }
+                    installRoutes { b, c, v, sse -> Mcp.handle(applicationContext, b, c, v, sse) }
                 }.start(wait = false)
             }
             running.value = true
@@ -199,7 +200,9 @@ internal const val MAX_BODY_BYTES = 512 * 1024L
  * rebinding guard, CORS, the media nonce — is exercisable from `testApplication` with no device.
  */
 internal fun Application.installRoutes(
-    handle: suspend (body: String, client: String, protocolHeader: String?) -> Mcp.Reply,
+    handle: suspend (
+        body: String, client: String, protocolHeader: String?, acceptsSse: Boolean,
+    ) -> Mcp.Reply,
 ) {
     routing {
         // CORS preflight — only honoured when the browser dashboard is opted in.
@@ -258,7 +261,13 @@ internal fun Application.installRoutes(
                 return@post
             }
 
-            when (val resp = handle(body, client, askedVersion)) {
+            // Streaming is offered only to a client that says it can read one. Anything else —
+            // including a client that asked for progress but did not advertise SSE — gets the
+            // single-JSON response it has always got.
+            val acceptsSse = call.request.headers["Accept"]
+                ?.contains("text/event-stream", ignoreCase = true) == true
+
+            when (val resp = handle(body, client, askedVersion, acceptsSse)) {
                 // A notification gets 202 with no body — it MUST NOT be answered.
                 is Mcp.Reply.None -> call.respondText("", status = HttpStatusCode.Accepted)
                 is Mcp.Reply.Body -> call.respondText(resp.json, ContentType.Application.Json)
@@ -266,6 +275,16 @@ internal fun Application.installRoutes(
                 is Mcp.Reply.Rejected -> call.respondText(
                     resp.json, ContentType.Application.Json, HttpStatusCode.fromValue(resp.status),
                 )
+                // Progress notifications, then the response, on this POST's own body. Verified by
+                // StreamingFlushTest that both engines actually put each write on the wire when
+                // it is made — without that this would be a silent stall wearing a new MIME type.
+                is Mcp.Reply.Streamed -> {
+                    call.response.headers.append("Cache-Control", "no-store")
+                    call.respondTextWriter(ContentType.Text.EventStream) {
+                        val last = resp.produce { line -> writeEvent(line) }
+                        writeEvent(last)
+                    }
+                }
             }
         }
         get("/mcp") {
@@ -301,6 +320,20 @@ internal fun Application.installRoutes(
             call.respondBytes(e.bytes, ContentType.parse(e.mime))
         }
     }
+}
+
+/**
+ * One SSE event carrying one JSON-RPC message, flushed immediately.
+ *
+ * The flush is the entire point: buffered, a progress notification arrives with the result it was
+ * meant to precede. `data:` lines are per the SSE grammar, and the JSON is emitted by
+ * kotlinx.serialization so it never contains a raw newline that would split the frame.
+ */
+private suspend fun java.io.Writer.writeEvent(json: String) {
+    write("data: ")
+    write(json)
+    write("\n\n")
+    flush()
 }
 
 /**

@@ -19,7 +19,7 @@ connect at all are the server switch and a client token.
 > capabilities, the double gate, per-call approval, token auth, the config UI, and the
 > installer are built and tested on real hardware (a Samsung Galaxy A03s and a Unisoc tablet),
 > including live cross-machine connections over **LAN** and **Tailscale**. The JSON-RPC and
-> HTTP layers are covered by **132 JVM unit tests**, and it is **driven end to end by two real MCP
+> HTTP layers are covered by **151 JVM unit tests**, and it is **driven end to end by two real MCP
 > clients** — the official MCP Python SDK and Claude Code itself. See [Caveats](#caveats).
 
 ---
@@ -326,7 +326,7 @@ tailnet-connected machine rather than exposing it publicly.
 ## Caveats
 
 The v1 roadmap is done and the transport has since been pinned to the MCP spec and covered
-by **132 JVM unit tests** (`./gradlew :app:testDebugUnitTest`). Remaining rough edges:
+by **151 JVM unit tests** (`./gradlew :app:testDebugUnitTest`). Remaining rough edges:
 
 - **Two real clients have connected**: the official MCP Python SDK 2.2.0 and Claude Code 2.1.251
   (which negotiates down from its own newer revision). Claude Desktop and the MCP Inspector have
@@ -343,9 +343,15 @@ by **132 JVM unit tests** (`./gradlew :app:testDebugUnitTest`). Remaining rough 
 - **`resource_link` media is served both ways** — through `resources/read` and as a plain HTTP GET
   on the link. Bytes live in memory with a 10-minute TTL and are consumed on first fetch by either
   path.
-- **No SSE stream** (`GET /mcp` returns 405, which the spec permits), so there is no channel for
-  `tools/list_changed` — tool descriptions are deliberately static and live state comes from
-  `list_capabilities`.
+- **No server-initiated SSE stream** (`GET /mcp` returns 405, which the spec permits), so there is
+  no channel for `tools/list_changed` — tool descriptions are deliberately static and live state
+  comes from `list_capabilities`. A `tools/call` *response* can still stream: see below.
+- **`notifications/progress` on the call's own response.** When a client sends both a
+  `_meta.progressToken` and `Accept: text/event-stream`, that POST is answered as an SSE stream
+  carrying a progress notification every 2 s and the JSON-RPC response last. It exists because 22
+  of the 40 tools block on a human tapping "Allow" for up to 25 s, which is otherwise
+  indistinguishable from a hung server. Both signals are required, so a client that sends neither —
+  or only one — gets exactly the single-JSON response it always did.
 
 ---
 
@@ -415,7 +421,7 @@ The v1 list below was fully checked off; this is its successor.
       `limit:-1` made a full inbox report "no messages" and made `read_notifications` throw;
       `set_volume` rejected the `voice_call` stream that `volume_info` advertises; `take_photo`
       echoed a camera it had not used; `post_notification` silently posted `"(no text)"`.
-- [x] **132 JVM unit tests** — the first in the project. Protocol conformance, the HTTP layer
+- [x] **151 JVM unit tests** — the first in the project. Protocol conformance, the HTTP layer
       (auth, DNS-rebinding guard, CORS, version header, body cap, media nonce), SAF containment,
       TLS cert properties, registry invariants, and schema quality gates. `installRoutes` takes
       the handler as a lambda so the whole HTTP layer runs under `testApplication` with no device.
@@ -504,9 +510,10 @@ The v1 list below was fully checked off; this is its successor.
       `outputSchema` anywhere would put the server in breach on nearly every call. Revisit only by
       first moving the refusal payload out of `structuredContent`, which would break the documented
       contract for a marginal gain. A test asserts no `outputSchema` appears while that holds.
-- [ ] **No SSE stream** (`GET /mcp` is a 405, which the spec permits), so no channel for
-      `tools/list_changed` or progress notifications. Claude Code tolerates the 405; revisit only
-      if a real client demands it.
+- [ ] **No server-initiated SSE stream** (`GET /mcp` is a 405, which the spec permits), so no
+      channel for `tools/list_changed`. Claude Code tolerates the 405; revisit only if a real client
+      demands it. Progress notifications no longer need it — they ride the call's own response
+      (v3).
 
 ### v3 — the release build, and three things deliberately not done
 
@@ -561,9 +568,28 @@ matters as much as the doing half: with v1 and v2 both complete, the temptation 
       thread. Note the ceiling — an instrumented process has foreground importance, so these guard
       refactor regressions, not the background-restriction failure the error strings describe. Never
       wire `connectedCheck` into `check`: the device-free JVM loop must keep working unplugged.
-- [ ] **`notifications/progress` during the approval wait.** 22 of 40 tools block on a human tap for
-      up to 25 s and the client sees a silent stall. Needs a streaming reply path verified on both
-      CIO and Netty; confirm `respondTextWriter` actually flushes per-write before committing to it.
+- [x] **`notifications/progress` during the approval wait.** 22 of 40 tools block on a human tap for
+      up to 25 s, and the client saw a silent stall indistinguishable from a hung server. A
+      `tools/call` is now answered as SSE on its **own POST response** — no `GET /mcp` stream
+      needed — emitting progress every 2 s and the JSON-RPC response last, but **only** when the
+      client sends both a `_meta.progressToken` and `Accept: text/event-stream`. Requiring both
+      means asking for progress can never change the response shape under a client that cannot read
+      it, and Claude Code's blanket `Accept: application/json, text/event-stream` does not
+      accidentally opt every call in.
+
+      The prerequisite was checked first, not assumed: `StreamingFlushTest` stands both engines up
+      on a real socket and times two writes held 700 ms apart. Both flush per-write — and the test
+      fails on both when the handler is made to buffer, so it is falsifying rather than merely
+      green. Without that, this feature would have replaced a silent stall with a silent stall that
+      had changed its MIME type, and no `testApplication` test could have seen the difference,
+      because the test engine never goes through a socket.
+
+      Verified end to end by the reference MCP Python SDK against the real engine
+      (`SdkProgressHarnessTest`, opt-in via `-Dandroidmcp.sdk=1`). That harness immediately earned
+      its keep: with a hardcoded progress token the SDK still read the result off the stream but
+      **silently dropped every notification**, because it correlates strictly on the token *it*
+      generated. A framing assertion cannot see that failure — the bytes are well-formed and the
+      call succeeds.
 
 ### v1 — feature completeness *(done)*
 

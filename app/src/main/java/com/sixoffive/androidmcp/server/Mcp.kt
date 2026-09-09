@@ -25,6 +25,9 @@ import com.sixoffive.androidmcp.core.GateEngine
 import com.sixoffive.androidmcp.core.Elevated
 import com.sixoffive.androidmcp.core.GateResult
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
 import java.util.concurrent.CountDownLatch
@@ -72,7 +75,32 @@ object Mcp {
         data class Body(val json: String) : Reply
         data class Rejected(val status: Int, val json: String) : Reply
         data object None : Reply
+
+        /**
+         * A response the client asked to receive as a stream.
+         *
+         * 22 of the 40 tools block on a human tapping "Allow" for up to
+         * [ApprovalManager.TIMEOUT_MS], during which a plain POST is an open socket saying
+         * nothing — indistinguishable from a hung server. When the client supplies a
+         * `_meta.progressToken` AND accepts `text/event-stream`, the same POST response carries
+         * `notifications/progress` while the work runs and the ordinary JSON-RPC response last.
+         *
+         * [produce] is handed an emitter for notification JSON and returns the final response
+         * JSON. The transport frames both as SSE; nothing here knows about SSE, so the framing
+         * stays testable and this stays the protocol layer.
+         */
+        class Streamed(
+            val produce: suspend (emit: suspend (String) -> Unit) -> String,
+        ) : Reply
     }
+
+    /**
+     * How often to emit progress while a tool runs.
+     *
+     * Well under the 25 s approval window so a human tap is never the first thing the client
+     * hears, and well over the cost of a write so an armed (instant) tool emits nothing at all.
+     */
+    internal const val PROGRESS_TICK_MS = 2_000L
 
     suspend fun handle(
         ctx: Context,
@@ -80,6 +108,14 @@ object Mcp {
         client: String,
         /** The request's `MCP-Protocol-Version` header, if it sent one. */
         protocolHeader: String? = null,
+        /**
+         * Did the request's `Accept` header include `text/event-stream`?
+         *
+         * Streaming is offered only when the client both asked for progress and said it can read
+         * an SSE body. A client that sends a progressToken but not the Accept header gets exactly
+         * the old single-JSON response — asking for progress must never break a working client.
+         */
+        acceptsSse: Boolean = false,
     ): Reply {
         val root = runCatching { json.parseToJsonElement(body) }.getOrNull()
             ?: return Reply.Rejected(400, errorNoId(-32700, "Parse error"))
@@ -133,7 +169,7 @@ object Mcp {
                 "tools/list" -> Reply.Body(result(id, buildJsonObject {
                     putJsonArray("tools") { Capabilities.REGISTRY.forEach { add(toolDef(ctx, it)) } }
                 }))
-                "tools/call" -> Reply.Body(toolsCall(ctx, id, root, client))
+                "tools/call" -> toolsCallReply(ctx, id, root, client, acceptsSse)
                 // Media is transient, single-use and minted per call, so there is nothing static
                 // to enumerate. An empty list is legal and honest; the links themselves arrive as
                 // resource_link content blocks on the tool result that produced them.
@@ -238,6 +274,100 @@ object Mcp {
             put("openWorldHint", spec.openWorld)
         }
     }
+
+    /**
+     * Dispatch a `tools/call`, streaming progress only when the client asked for it both ways.
+     *
+     * The heartbeat runs BESIDE the work rather than being threaded through the 40 tool handlers:
+     * every tool becomes observable without any of them knowing progress exists, and a tool that
+     * finishes inside one tick emits nothing at all.
+     */
+    private suspend fun toolsCallReply(
+        ctx: Context,
+        id: JsonElement,
+        root: JsonObject,
+        client: String,
+        acceptsSse: Boolean,
+    ): Reply {
+        val token = progressToken(root)
+        if (!acceptsSse || token == null) return Reply.Body(toolsCall(ctx, id, root, client))
+
+        // Same key ApprovalManager files the pending prompt under, so the heartbeat can say which
+        // of the two very different stalls this is: a human who hasn't looked at their phone, or
+        // a tool genuinely taking its time.
+        val rpcKey = (id as? JsonPrimitive)?.contentOrNull
+            ?.let { ApprovalManager.rpcKey(client, it, !id.isString) }
+
+        return Reply.Streamed { emit ->
+            streamWithProgress(
+                token = token,
+                emit = emit,
+                approvalPending = { rpcKey != null && ApprovalManager.isPendingFor(rpcKey) },
+            ) { toolsCall(ctx, id, root, client) }
+        }
+    }
+
+    /**
+     * Run [work], emitting a progress notification every [tickMs] until it finishes.
+     *
+     * Separate from the dispatch above, and taking its inputs rather than reaching for them, so
+     * the timing behaviour is testable with no [Context] and no real tool: the properties that
+     * matter here are that a fast call emits NOTHING, that a slow one emits a notification that
+     * cannot arrive behind its own result, and that progress never goes backwards.
+     */
+    internal suspend fun streamWithProgress(
+        token: JsonPrimitive,
+        emit: suspend (String) -> Unit,
+        approvalPending: () -> Boolean,
+        tickMs: Long = PROGRESS_TICK_MS,
+        work: suspend () -> String,
+    ): String = coroutineScope {
+        val job = async { work() }
+        val startedAt = System.nanoTime()
+        while (!job.isCompleted) {
+            delay(tickMs)
+            // Re-check AFTER the delay: a tool that finished during it must not emit a progress
+            // notification that arrives behind the result it was supposed to precede.
+            if (job.isCompleted) break
+            val elapsed = (System.nanoTime() - startedAt) / 1_000_000_000.0
+            val message = if (approvalPending()) "waiting for approval on the device" else "working"
+            // A write to a client that has gone away throws here, cancelling this scope and with
+            // it the work — which is what should happen. ApprovalManager.require cancels its
+            // notification in a `finally`, so no orphaned prompt is left in the shade for a
+            // request nobody is waiting on.
+            emit(progressNotification(token, elapsed, message))
+        }
+        job.await()
+    }
+
+    /**
+     * The client's `_meta.progressToken`, or null if it did not ask for progress.
+     *
+     * Spec: a progress token is a string or an integer. [JsonNull] is a [JsonPrimitive], so an
+     * explicit `"progressToken": null` has to be excluded by hand or it would be echoed back as
+     * the token of a stream nothing can correlate.
+     */
+    private fun progressToken(root: JsonObject): JsonPrimitive? {
+        val t = ((root["params"] as? JsonObject)?.get("_meta") as? JsonObject)
+            ?.get("progressToken") as? JsonPrimitive ?: return null
+        if (t is JsonNull) return null
+        return if (t.isString || t.longOrNull != null) t else null
+    }
+
+    internal fun progressNotification(token: JsonPrimitive, seconds: Double, message: String): String =
+        buildJsonObject {
+            put("jsonrpc", "2.0")
+            put("method", "notifications/progress")
+            putJsonObject("params") {
+                put("progressToken", token)
+                // Spec: MUST increase with each notification for the same token. Elapsed seconds
+                // does by construction. No `total`: the wait is genuinely indeterminate — the tool
+                // may be armed and instant, or blocked on a human — and a total that the progress
+                // then sails past is worse than none.
+                put("progress", seconds)
+                put("message", message)
+            }
+        }.toString()
 
     private suspend fun toolsCall(ctx: Context, id: JsonElement, root: JsonObject, client: String): String {
         val params = root["params"] as? JsonObject

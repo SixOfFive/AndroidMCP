@@ -78,6 +78,14 @@ android {
             // nonce from MediaStore.put — the tests would pass while asserting nothing. Anything
             // that genuinely needs a device stays out of this source set.
             isReturnDefaultValues = false
+
+            // Forward the opt-in for SdkProgressHarnessTest into the FORKED test JVM. Without
+            // this, `-Dandroidmcp.sdk=1` sets the property on the Gradle daemon only, the test's
+            // `assumeTrue` never sees it, and the harness reports as skipped while looking for
+            // all the world like it ran.
+            all {
+                it.systemProperty("androidmcp.sdk", System.getProperty("androidmcp.sdk") ?: "")
+            }
         }
     }
     packaging {

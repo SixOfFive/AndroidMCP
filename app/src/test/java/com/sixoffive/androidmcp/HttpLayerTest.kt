@@ -12,6 +12,8 @@ import io.ktor.client.request.options
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
+import io.ktor.http.contentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.testing.testApplication
 import kotlinx.coroutines.runBlocking
@@ -50,11 +52,28 @@ class HttpLayerTest {
 
     /** Routes wired to a handler that just echoes which client authenticated. */
     private fun app(block: suspend (io.ktor.client.HttpClient) -> Unit) = testApplication {
-        application { installRoutes { _, client, _ -> Mcp.Reply.Body("""{"ok":true,"client":"$client"}""") } }
+        application { installRoutes { _, client, _, _ -> Mcp.Reply.Body("""{"ok":true,"client":"$client"}""") } }
         block(client)
     }
 
     private val ping = """{"jsonrpc":"2.0","id":1,"method":"ping"}"""
+
+    /** Routes wired to a handler that streams [notifications] and then [last]. */
+    private fun streamingApp(
+        notifications: List<String>,
+        last: String,
+        seenAccept: (Boolean) -> Unit = {},
+        block: suspend (io.ktor.client.HttpClient) -> Unit,
+    ) = testApplication {
+        application {
+            installRoutes { _, _, _, sse ->
+                seenAccept(sse)
+                Mcp.Reply.Streamed { emit -> notifications.forEach { emit(it) }; last }
+            }
+        }
+        block(client)
+    }
+
 
     // ---- auth ----
 
@@ -156,7 +175,7 @@ class HttpLayerTest {
         // The check moved into Mcp.handle: it must not apply to `initialize`, and only the parsed
         // method can tell. McpProtocolTest covers the decision; this pins the plumbing.
         var seen: String? = "not-called"
-        application { installRoutes { _, _, v -> seen = v; Mcp.Reply.Body("{}") } }
+        application { installRoutes { _, _, v, _ -> seen = v; Mcp.Reply.Body("{}") } }
         client.post("/mcp") {
             header("Authorization", "Bearer $token")
             header("MCP-Protocol-Version", "2099-01-01")
@@ -171,7 +190,7 @@ class HttpLayerTest {
 
     @Test
     fun `a notification gets 202 with an empty body`() = testApplication {
-        application { installRoutes { _, _, _ -> Mcp.Reply.None } }
+        application { installRoutes { _, _, _, _ -> Mcp.Reply.None } }
         val r = client.post("/mcp") { header("Authorization", "Bearer $token"); setBody("{}") }
         assertEquals(HttpStatusCode.Accepted, r.status)
         assertEquals("", r.bodyAsText())
@@ -179,7 +198,7 @@ class HttpLayerTest {
 
     @Test
     fun `a rejected envelope becomes its HTTP status, not a 200`() = testApplication {
-        application { installRoutes { _, _, _ -> Mcp.Reply.Rejected(400, """{"jsonrpc":"2.0","error":{"code":-32700}}""") } }
+        application { installRoutes { _, _, _, _ -> Mcp.Reply.Rejected(400, """{"jsonrpc":"2.0","error":{"code":-32700}}""") } }
         val r = client.post("/mcp") { header("Authorization", "Bearer $token"); setBody("nope") }
         assertEquals(HttpStatusCode.BadRequest, r.status)
     }
@@ -298,5 +317,77 @@ class HttpLayerTest {
         // The old scheme was "m" + a short base36 counter, so every id was under ~6 characters
         // and fully predictable from the previous one. The length floor above rules that out;
         // asserting on the character content would only re-encode the encoding alphabet.
+    }
+
+    // ---- SSE framing for streamed replies ----
+    //
+    // The wire format is the whole risk of streaming: the protocol layer is well covered by
+    // ProgressStreamTest, but a frame the client cannot parse turns a working server into a
+    // broken one for every request that asks for progress.
+
+    @Test
+    fun `a streamed reply is framed as SSE with the response last`() = streamingApp(
+        notifications = listOf("""{"jsonrpc":"2.0","method":"notifications/progress"}"""),
+        last = """{"jsonrpc":"2.0","id":1,"result":{}}""",
+    ) { c ->
+        val r = c.post("/mcp") {
+            header("Authorization", "Bearer $token")
+            header("Accept", "application/json, text/event-stream")
+            setBody(ping)
+        }
+        assertEquals(HttpStatusCode.OK, r.status)
+        assertEquals(ContentType.Text.EventStream.contentType, r.contentType()?.contentType)
+        val body = r.bodyAsText()
+
+        // Every frame is `data: <json>` and frames are separated by a blank line.
+        val frames = body.split("\n\n").filter { it.isNotBlank() }
+        assertEquals(2, frames.size, "expected 2 SSE frames, got ${frames.size} in:\n$body")
+        assertTrue(frames.all { it.startsWith("data: ") }, "malformed frame in:\n$body")
+        // The JSON-RPC response MUST come last — a client stops reading once it has it.
+        assertTrue(frames.last().contains("\"result\""), "the response was not the final frame")
+        assertTrue(frames.first().contains("notifications/progress"))
+        // No frame may contain a bare newline, which would split it into two events.
+        assertTrue(frames.none { it.removePrefix("data: ").contains("\n") }, "a frame spans lines")
+    }
+
+    @Test
+    fun `a streamed reply is not cached by anything in between`() = streamingApp(
+        notifications = emptyList(), last = """{"jsonrpc":"2.0","id":1,"result":{}}""",
+    ) { c ->
+        val r = c.post("/mcp") {
+            header("Authorization", "Bearer $token")
+            header("Accept", "text/event-stream")
+            setBody(ping)
+        }
+        assertEquals("no-store", r.headers["Cache-Control"])
+    }
+
+    @Test
+    fun `the Accept header decides whether streaming is offered at all`() {
+        // The transport's only job in the decision: report honestly what the client said it can
+        // read. Getting this wrong in either direction is a broken client, not a missing feature.
+        var seen: Boolean? = null
+        streamingApp(emptyList(), "{}", seenAccept = { seen = it }) { c ->
+            c.post("/mcp") {
+                header("Authorization", "Bearer $token")
+                header("Accept", "application/json, text/event-stream")
+                setBody(ping)
+            }
+        }
+        assertEquals(true, seen)
+
+        streamingApp(emptyList(), "{}", seenAccept = { seen = it }) { c ->
+            c.post("/mcp") {
+                header("Authorization", "Bearer $token")
+                header("Accept", "application/json")
+                setBody(ping)
+            }
+        }
+        assertEquals(false, seen)
+
+        streamingApp(emptyList(), "{}", seenAccept = { seen = it }) { c ->
+            c.post("/mcp") { header("Authorization", "Bearer $token"); setBody(ping) }
+        }
+        assertEquals(false, seen, "a client that sent no Accept header must not be streamed to")
     }
 }

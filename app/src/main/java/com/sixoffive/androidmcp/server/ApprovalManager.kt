@@ -79,6 +79,15 @@ object ApprovalManager {
         }
     }
 
+    /**
+     * Is a human being asked about this (client, request id) right now?
+     *
+     * Read-only, and only ever used to word a progress notification — so a stalled call can say
+     * "waiting for approval on the device" instead of a generic "working", which is the whole
+     * difference between "pick up your phone" and "something is broken".
+     */
+    fun isPendingFor(rpcKey: String): Boolean = byRpcId.containsKey(rpcKey)
+
     fun resolve(id: String, allow: Boolean) { pending.remove(id)?.complete(allow) }
 
     /**
