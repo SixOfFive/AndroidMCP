@@ -272,11 +272,22 @@ async function connect(conn){
   try {
     conn.serverInfo = await rpc(conn, "initialize", { protocolVersion:"2025-06-18", capabilities:{}, clientInfo:{ name:"androidmcp-console", version:"1.0" } });
     const list = await rpc(conn, "tools/list", {});
+    // Live on/off state comes from list_capabilities, not from the tool description.
+    // Descriptions used to carry a "[currently enabled]" suffix, which this scraped — but that
+    // suffix was removed on purpose: clients cache tools/list at connect and the server declares
+    // no listChanged, so the suffix went stale the moment the owner flipped a toggle. Scraping it
+    // now reports every capability as disabled.
+    const liveState = await fetchCapabilityState(conn);
     conn.tools = (list.tools||[]).map(t => ({
       name: t.name, description: t.description||"", inputSchema: t.inputSchema||{type:"object",properties:{}},
       cat: CAT_OF[t.name] || "other",
-      enabled: /currently enabled/i.test(t.description||""),
-      highImpact: /elevated|silent|screen|photo|record|clipboard|sms|call log|location|notification/i.test(t.description||""),
+      // undefined (rather than false) when list_capabilities could not be read, so the UI can say
+      // "unknown" instead of claiming everything is off.
+      enabled: liveState ? liveState.has(t.name) : undefined,
+      // The server states this explicitly now, and also carries annotations.destructiveHint —
+      // both beat the old keyword guess against the description text.
+      highImpact: /Requires the device owner to approve each call/i.test(t.description||"")
+        || !!(t.annotations && t.annotations.destructiveHint),
     }));
     conn.status="online"; conn.err="";
   } catch (e) {
@@ -285,6 +296,21 @@ async function connect(conn){
   if (conn.status==="online") mountConn(conn);
   renderTabs(); renderConnbar(); showActive();
 }
+/** Ask the server which capabilities are actually on. Returns a Set of ids, or null if unavailable. */
+async function fetchCapabilityState(conn){
+  try {
+    const res = await rpc(conn, "tools/call", { name:"list_capabilities", arguments:{} });
+    if (!res || res.isError) return null;
+    const text = ((res.content||[]).find(b => b.type==="text") || {}).text || "";
+    const on = new Set();
+    for (const line of text.split("\n")) {
+      const m = /^([a-z0-9_]+):\s*enabled\b/.exec(line.trim());
+      if (m) on.add(m[1]);
+    }
+    return on.size ? on : null;
+  } catch (e) { return null; }
+}
+
 function disconnect(conn){
   unmountConn(conn);
   conn.status="off"; conn.err="Disconnected."; conn.tools=[]; conn.serverInfo=null;
@@ -407,7 +433,11 @@ function overviewPanel(c){
   add("server", (sv.name||"?")+" "+(sv.version||""));
   add("protocol", (c.serverInfo&&c.serverInfo.protocolVersion)||"?");
   add("tools", String(c.tools.length));
-  add("enabled", String(c.tools.filter(t=>t.enabled).length)+" / "+c.tools.length);
+  // `enabled` is undefined when list_capabilities could not be read. Counting truthy values would
+  // then quietly report "0 / 40" — indistinguishable from everything genuinely being off.
+  const known = c.tools.some(t => t.enabled !== undefined);
+  add("enabled", known ? String(c.tools.filter(t=>t.enabled).length)+" / "+c.tools.length
+                       : "unknown (list_capabilities unavailable)");
   b.appendChild(kv);
   b.appendChild(el("p",{class:"why",style:"margin-top:10px",html:"Every capability is gated on the device: an <b>enabled</b> pill means the toggle is on there. A disabled tool still lists here but will refuse until you switch it on in the app."}));
   wrap.appendChild(b);
@@ -419,7 +449,9 @@ function toolCard(conn, t){
   const props = (t.inputSchema && t.inputSchema.properties) || {};
   const required = (t.inputSchema && t.inputSchema.required) || [];
   const card = el("div",{class:"card"+(t.cat==="elevated"?" elev":(t.highImpact?" hi":""))});
-  const pill = t.enabled ? el("span",{class:"pill on",text:"enabled"}) : el("span",{class:"pill off",text:"disabled"});
+  const pill = t.enabled === undefined ? el("span",{class:"pill off",text:"state unknown"})
+             : t.enabled ? el("span",{class:"pill on",text:"enabled"})
+             : el("span",{class:"pill off",text:"disabled"});
   card.appendChild(el("div",{class:"card-h"},[
     el("div",{class:"t"},[ el("div",{class:"name",text:prettyName(t.name)}), el("div",{class:"id",text:t.name}) ]),
     pill,
@@ -492,8 +524,21 @@ function renderResult(box, res, ms){
   box.appendChild(el("div",{class:"meta"},[ el("span",{text:new Date().toLocaleTimeString()}), el("span",{class:"ms",text:ms+" ms"}) ]));
   const content = (res && res.content) || [];
   const isErr = res && res.isError;
+  // The server also sends structuredContent serialized into a text block, as the spec asks
+  // ("a tool that returns structured content SHOULD also return the serialized JSON in a
+  // TextContent block") — that block is for clients which only read `content`. This one renders
+  // structuredContent properly below, so showing the raw JSON too would print a refusal three
+  // times over.
+  const scJson = res && res.structuredContent ? JSON.stringify(res.structuredContent) : null;
+  const isDuplicateOfStructured = (txt) => {
+    if (!scJson || !txt) return false;
+    try { return JSON.stringify(JSON.parse(txt)) === scJson; } catch (e) { return false; }
+  };
   for (const blk of content) {
-    if (blk.type==="text") { const pre = el("pre",{text: blk.text}); if (isErr) pre.style.color="var(--hi)"; box.appendChild(pre); }
+    if (blk.type==="text") {
+      if (isDuplicateOfStructured(blk.text)) continue;
+      const pre = el("pre",{text: blk.text}); if (isErr) pre.style.color="var(--hi)"; box.appendChild(pre);
+    }
     else if (blk.type==="image") box.appendChild(el("img",{src:"data:"+(blk.mimeType||"image/png")+";base64,"+blk.data, alt:"image reply"}));
     else if (blk.type==="audio") box.appendChild(el("audio",{controls:"", src:"data:"+(blk.mimeType||"audio/mp4")+";base64,"+blk.data}));
     else if (blk.type==="resource_link") {
@@ -523,11 +568,16 @@ function renderResult(box, res, ms){
 // ---------- helpers ----------
 function prettyName(id){ return id.replace(/_/g," ").replace(/\b\w/g,c=>c.toUpperCase()); }
 function whyText(desc){
-  const m = /Why:\s*(.*?)\.\s*Exposes:/s.exec(desc);
-  const ex = /Exposes:\s*(.*?)\.\s*\[/s.exec(desc);
-  let s = m?m[1]:desc;
-  if (ex) s += " · exposes: "+ex[1];
-  return s;
+  // Descriptions are now "<what the tool does>. Exposes: <data>." — optionally followed by the
+  // approval note and an "[unavailable on this device: …]" marker. The old form was
+  // "<title>. Why: … . Exposes: … . [currently enabled]", so both of the previous patterns
+  // (which needed "Why:" and a trailing "[") stopped matching entirely.
+  const i = desc.indexOf(" Exposes: ");
+  if (i < 0) return desc;
+  const what = desc.slice(0, i).trim();
+  let exposes = desc.slice(i + " Exposes: ".length);
+  exposes = exposes.split(" Requires the device owner")[0].split(" [unavailable")[0].trim().replace(/\.$/, "");
+  return what + (exposes ? " · exposes: " + exposes : "");
 }
 function escapeHtml(s){ return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 
