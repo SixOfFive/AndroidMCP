@@ -19,8 +19,9 @@ connect at all are the server switch and a client token.
 > capabilities, the double gate, per-call approval, token auth, the config UI, and the
 > installer are built and tested on real hardware (a Samsung Galaxy A03s and a Unisoc tablet),
 > including live cross-machine connections over **LAN** and **Tailscale**. The JSON-RPC and
-> HTTP layers are covered by **151 JVM unit tests**, and it is **driven end to end by two real MCP
-> clients** — the official MCP Python SDK and Claude Code itself. See [Caveats](#caveats).
+> HTTP layers are covered by **151 JVM unit tests**, and it is **driven end to end by three real MCP
+> clients** — the official MCP Python SDK, Claude Code itself, and the MCP Inspector.
+> See [Caveats](#caveats).
 
 ---
 
@@ -330,9 +331,15 @@ by **151 JVM unit tests** (`./gradlew :app:testDebugUnitTest`), plus **four inst
 for the two things a device-free JVM cannot reach — a main-thread DataStore read and the camera and
 mic (`./gradlew :app:connectedDebugAndroidTest`, never wired into `check`). Remaining rough edges:
 
-- **Two real clients have connected**: the official MCP Python SDK 2.2.0 and Claude Code 2.1.251
-  (which negotiates down from its own newer revision). Claude Desktop and the MCP Inspector have
-  not been tried.
+- **Three real clients have connected**: the official MCP Python SDK 2.2.0, Claude Code 2.1.251
+  (which negotiates down from its own newer revision), and the **MCP Inspector 2.6.0** — which
+  reports the connection as `MCP 2025-06-18`, renders each tool's `title` and `READ-ONLY` badge from
+  the annotations, and displays the refusal envelope's `structuredContent` in full.
+- **Claude Desktop is configured but not yet confirmed.** The entry is in
+  `~/.config/Claude/claude_desktop_config.json` and matches the shape the app's own bundled
+  validator accepts (`type: "http" | "streamable-http"`, `url`, optional `headers`). It needs an
+  app restart to load, which has not happened yet. Note this stores a bearer token in plaintext on
+  disk.
 - **TLS pulls in the Netty engine**, because CIO cannot serve HTTPS at all — and there is no
   alternative: the Ktor issue is open since 2019, and the servlet-container engines are not
   viable on Android. Netty is ~2.0 MB, about 7% of the APK; the caveat here used to blame it for
@@ -428,7 +435,7 @@ The v1 list below was fully checked off; this is its successor.
       TLS cert properties, registry invariants, and schema quality gates. `installRoutes` takes
       the handler as a lambda so the whole HTTP layer runs under `testApplication` with no device.
 
-- [x] **Driven by two real MCP clients.** The official **MCP Python SDK 2.2.0** completed the full
+- [x] **Driven by real MCP clients.** The official **MCP Python SDK 2.2.0** completed the full
       lifecycle against the K70 over LAN: `initialize` (version negotiated, `title` and
       `instructions` parsed), `notifications/initialized`, `ping`, `tools/list` (40 tools, with
       `required` and `annotations` deserialised into the SDK's own types), `tools/call`, and an
@@ -500,10 +507,34 @@ The v1 list below was fully checked off; this is its successor.
 
 **Open, and decisions taken:**
 
-- [ ] **Claude Desktop and the MCP Inspector.** The Inspector needs `npx`; this machine has bare
-      `node` with no npm, and Debian's `corepack` is broken (`MODULE_NOT_FOUND`), so trying it
-      needs `sudo apt install npm` first. Claude Desktop dials from Anthropic's servers and would
-      need the `mcp-remote` bridge.
+- [x] **The MCP Inspector 2.6.0 — connected.** Every premise of the old entry was wrong, which is
+      the useful part. `corepack` is *not* broken (0.24.0 works), and it yields `npm`/`npx` into
+      `~/.local/bin` with **no sudo at all** — `corepack enable --install-directory ~/.local/bin npm`.
+      Claude Desktop does *not* dial from Anthropic's servers for a config-file entry, and it is
+      **already installed on this Debian box** (`/usr/bin/claude-desktop` 1.40609.0).
+
+      The real blocker was none of those: **no Inspector release supports Node 20**. Even 0.22.0
+      wants `>=22.7.5` and current wants `>=22.19.0`, against Debian's 20.19.2. Solved without
+      touching the system — official Node 22.23.2 tarball, checksum verified, unpacked to
+      `~/.local/node22` (204 MB), used by PATH for this work only.
+
+      Verified both ways. `--cli` mode gives scriptable evidence: 40 tools with annotations parsed,
+      `battery_status` returning live data, `resources/list` empty as designed, and the disabled-tool
+      refusal arriving with `isError: true`, both content blocks, and the full `structuredContent`.
+      The web UI reports `MCP 2025-06-18`, renders each tool's `title` and a `READ-ONLY` badge from
+      the annotations, and shows all five handshake steps green
+      (`initialize` 75 ms, `notifications/initialized`, `resources/list` 30 ms, `tools/list` 75 ms,
+      `resources/templates/list` 58 ms).
+
+      Incidental confirmation of an earlier wire-level finding: the Inspector exposes a
+      **Protocol Era** selector — *Legacy (2025-11-25 handshake)* / *Auto (probes `server/discover`,
+      falls back)* / *Modern (2026-07-28)*. The dual-era handshake this server was hardened against
+      is a first-class client setting, not a Claude Code quirk.
+- [ ] **Claude Desktop — configured, not yet confirmed.** The entry is written to
+      `~/.config/Claude/claude_desktop_config.json` and matches the shape the app's own bundled
+      validator accepts: `type: "http" | "streamable-http"` (both normalised to `http`), `url`,
+      optional `headers`. No `mcp-remote` bridge is needed. It does not hot-reload, so it awaits an
+      app restart. Caveat worth stating: this puts a **bearer token in plaintext** in a config file.
 - [x] **`outputSchema` — deliberately NOT declared, on the spec's own terms.** The rule is
       unconditional: *"If an output schema is provided: Servers MUST provide structured results
       that conform to this schema."* There is no carve-out for errors. This server's **most common
