@@ -258,7 +258,13 @@ object Mcp {
             return error(id, -32602, "Unknown tool: $name")
         }
 
-        return when (val gate = GateEngine.evaluate(ctx, cap)) {
+        // On Dispatchers.IO, not the request coroutine: the gate is mostly cheap permission
+        // lookups, but for a `rootRequired` capability it spawns `su -c id` to detect elevated
+        // access. On a Magisk device whose superuser prompt goes unanswered that probe runs to its
+        // 10 s bound, and it happened before the approval prompt — so it blocked a Ktor coroutine
+        // for a call the owner had not yet consented to. (`Root.isAvailable` memoises the result,
+        // so this is once per process, but once is enough to matter.)
+        return when (val gate = withContext(Dispatchers.IO) { GateEngine.evaluate(ctx, cap) }) {
             is GateResult.Denied -> {
                 AuditLog.record(cap.id, client, false, gate.reason.name)
                 result(id, refusalResult(cap, gate))
