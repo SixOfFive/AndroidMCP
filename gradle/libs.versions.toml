@@ -9,6 +9,9 @@ datastore = "1.1.1"
 ktor = "2.3.12"
 serialization = "1.7.3"
 junit = "4.13.2"
+androidxTestJunit = "1.1.5"
+androidxTestRunner = "1.5.2"
+androidxTestRules = "1.5.0"
 coroutinesTest = "1.8.1"
 mockito = "5.14.2"
 
@@ -40,6 +43,9 @@ junit = { group = "junit", name = "junit", version.ref = "junit" }
 kotlin-test-junit = { group = "org.jetbrains.kotlin", name = "kotlin-test-junit", version.ref = "kotlin" }
 kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutinesTest" }
 ktor-server-test-host = { group = "io.ktor", name = "ktor-server-test-host", version.ref = "ktor" }
+androidx-test-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxTestJunit" }
+androidx-test-runner = { group = "androidx.test", name = "runner", version.ref = "androidxTestRunner" }
+androidx-test-rules = { group = "androidx.test", name = "rules", version.ref = "androidxTestRules" }
 mockito-core = { group = "org.mockito", name = "mockito-core", version.ref = "mockito" }
 
 [plugins]

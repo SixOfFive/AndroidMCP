@@ -15,6 +15,7 @@ android {
         targetSdk = 33 // matches the A03s (Android 13); avoids Android-14 FGS-type enforcement for the MVP
         versionCode = 1
         versionName = "0.1.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
@@ -133,4 +134,11 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.ktor.server.test.host)
     testImplementation(libs.mockito.core)
+
+    // Instrumentation tests. Deliberately NOT wired into `check` — see app/src/androidTest.
+    androidTestImplementation(libs.androidx.test.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.rules)
+    androidTestImplementation(libs.kotlin.test.junit)
+    androidTestImplementation(libs.kotlinx.coroutines.test)
 }

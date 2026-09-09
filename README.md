@@ -326,7 +326,9 @@ tailnet-connected machine rather than exposing it publicly.
 ## Caveats
 
 The v1 roadmap is done and the transport has since been pinned to the MCP spec and covered
-by **151 JVM unit tests** (`./gradlew :app:testDebugUnitTest`). Remaining rough edges:
+by **151 JVM unit tests** (`./gradlew :app:testDebugUnitTest`), plus **four instrumentation tests**
+for the two things a device-free JVM cannot reach — a main-thread DataStore read and the camera and
+mic (`./gradlew :app:connectedDebugAndroidTest`, never wired into `check`). Remaining rough edges:
 
 - **Two real clients have connected**: the official MCP Python SDK 2.2.0 and Claude Code 2.1.251
   (which negotiates down from its own newer revision). Claude Desktop and the MCP Inspector have
@@ -561,13 +563,42 @@ matters as much as the doing half: with v1 and v2 both complete, the temptation 
       and serving package names through it would bypass the gate on `list_packages`; `prompts`
       duplicates what a local `.claude/commands/*.md` does better.
 
-**Still open**
+**Done since, with what checking the claim revealed**
 
-- [ ] **Three instrumentation tests**, and no more: `take_photo` twice in a row (guarding the
-      camera-release fix), `record_audio` repeat, and `ConfigStore.currentBlocking()` on the main
-      thread. Note the ceiling — an instrumented process has foreground importance, so these guard
-      refactor regressions, not the background-restriction failure the error strings describe. Never
-      wire `connectedCheck` into `check`: the device-free JVM loop must keep working unplugged.
+- [x] **Four instrumentation tests** (`app/src/androidTest`, run with
+      `./gradlew :app:connectedDebugAndroidTest`). Deliberately NOT wired into `check` — the
+      device-free JVM loop must keep working unplugged.
+
+      > **Running these UNINSTALLS the app and wipes its data.** AGP removes both APKs when the
+      > run finishes, so minted tokens, SAF grants, the enabled-capability set and the port/bind
+      > settings all go with it — and it installs a *debuggable* build over your release one along
+      > the way. Reinstall after every run:
+      > `adb install -r app/build/outputs/apk/release/app-release.apk`, then confirm
+      > `dumpsys package com.sixoffive.androidmcp | grep pkgFlags` shows **no** `DEBUGGABLE`.
+      > Learned the hard way, on a device that had three live tokens on it.
+
+      **`ConfigStore.currentBlocking()` on the main thread — the one that earns its keep.** It is
+      `runBlocking { flow.first() }` over a DataStore, and `BootReceiver` calls it from `onReceive`,
+      on the main thread, inside the 10 s broadcast window. A JVM test cannot see this at all:
+      there is no Looper to deadlock against. Confirmed falsifying — rewritten as
+      `runBlocking { withContext(Dispatchers.Main) { … } }`, a plausible refactor, the run goes red
+      (as a process crash after the ANR watchdog, not a tidy assertion message).
+
+      **The two capture tests are smoke tests, and the roadmap's claim for them was wrong.** They
+      were listed here as "guarding the camera-release fix". Checking that claim killed it: run
+      against the **actual pre-fix code** (`git show 0709889^`), `take_photo` twice in a row
+      *passes*, completing in ~2.4 s instead of hanging. The audio equivalent passes with
+      `rec.release()` deleted outright. Neither leak is observable from an instrumented process on
+      the K70 — the reader and handler thread are still torn down, the leaked object is
+      unreferenced immediately, and the camera service hands the same process a fresh open. The
+      original failure was seen through the long-lived foreground service, a different environment
+      with a different lifetime and different GC pressure.
+
+      So they assert what they can prove: both paths return well-formed data on a repeat call,
+      permissions plumb through, and neither hangs. A pass says nothing about whether the camera or
+      recorder was released. The pre-existing ceiling still applies too — an instrumented process
+      has foreground importance, so none of this reproduces the background-restriction failures the
+      tools' own error strings describe.
 - [x] **`notifications/progress` during the approval wait.** 22 of 40 tools block on a human tap for
       up to 25 s, and the client saw a silent stall indistinguishable from a hung server. A
       `tools/call` is now answered as SSE on its **own POST response** — no `GET /mcp` stream
