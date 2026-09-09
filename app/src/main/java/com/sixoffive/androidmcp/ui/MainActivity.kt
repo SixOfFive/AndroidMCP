@@ -441,7 +441,22 @@ private fun ServerScreen() {
                                 style = MaterialTheme.typography.bodySmall,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis,
                             )
-                            TextButton(onClick = { ConfigStore.removeFolder(f) }) { Text("Remove") }
+                            TextButton(onClick = {
+                                // Release the OS grant too, not just our record of it. Dropping the
+                                // config entry is what stops list_files reaching the folder, but the
+                                // persistable permission taken at Add time survives indefinitely
+                                // otherwise: the app keeps accumulating grants (Android caps these
+                                // per app), an owner auditing what androidmcp can touch still sees
+                                // one the app's own UI says was removed, and re-adding the folder
+                                // silently reuses a grant they believed was gone.
+                                runCatching {
+                                    ctx.contentResolver.releasePersistableUriPermission(
+                                        android.net.Uri.parse(f),
+                                        android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                                    )
+                                }
+                                ConfigStore.removeFolder(f)
+                            }) { Text("Remove") }
                         }
                     }
                 }
