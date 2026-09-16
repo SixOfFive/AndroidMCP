@@ -78,6 +78,46 @@ private fun scopeLabel(scope: Set<String>?): String = when {
     else -> "${scope.size} " + if (scope.size == 1) "capability" else "capabilities"
 }
 
+/** Expiry choices offered when generating a token. */
+private enum class TokenTtl(val label: String, val ms: Long?) {
+    NEVER("Never", null),
+    HOUR("1h", 3_600_000L),
+    DAY("24h", 86_400_000L),
+    WEEK("7d", 7L * 86_400_000L),
+    MONTH("30d", 30L * 86_400_000L),
+}
+
+private fun tokenTitle(t: com.sixoffive.androidmcp.core.ClientToken): String {
+    val id = if (t.label.isNotBlank()) "${t.label} (${t.name})" else t.name
+    return "$id  ·  ${scopeLabel(t.scope)}"
+}
+
+private fun tokenSubtitle(t: com.sixoffive.androidmcp.core.ClientToken, lastUsedMs: Long?): String {
+    val now = System.currentTimeMillis()
+    val created = if (t.createdAt == 0L) "created ?" else "created ${relPast(now - t.createdAt)}"
+    val expiry = when {
+        t.expiresAt == null -> "no expiry"
+        now >= t.expiresAt -> "EXPIRED"
+        else -> "expires in ${relFuture(t.expiresAt - now)}"
+    }
+    val used = if (lastUsedMs == null) "never used" else "used ${relPast(now - lastUsedMs)}"
+    return "$created · $expiry · $used"
+}
+
+private fun relPast(deltaMs: Long): String = when {
+    deltaMs < 60_000 -> "just now"
+    deltaMs < 3_600_000 -> "${deltaMs / 60_000}m ago"
+    deltaMs < 86_400_000 -> "${deltaMs / 3_600_000}h ago"
+    else -> "${deltaMs / 86_400_000}d ago"
+}
+
+private fun relFuture(deltaMs: Long): String = when {
+    deltaMs < 60_000 -> "<1m"
+    deltaMs < 3_600_000 -> "${deltaMs / 60_000}m"
+    deltaMs < 86_400_000 -> "${deltaMs / 3_600_000}h"
+    else -> "${deltaMs / 86_400_000}d"
+}
+
 @Composable
 private fun AppTheme(content: @Composable () -> Unit) {
     val dark = isSystemInDarkTheme()
@@ -100,6 +140,7 @@ private fun ServerScreen() {
     val bound by McpService.boundInfo.collectAsState()
     val tokens by TokenStore.tokens.collectAsState()
     val minted by TokenStore.freshlyMinted.collectAsState()
+    val lastUsed by TokenStore.lastUsed.collectAsState()
     val audit by AuditLog.entries.collectAsState()
     var permRefresh by remember { mutableIntStateOf(0) }
     var showBootWarning by remember { mutableStateOf(false) }
@@ -514,6 +555,8 @@ private fun ServerScreen() {
                             Capabilities.REGISTRY.forEach { put(it.id, it.id in low) }
                         }
                     }
+                    var label by remember { mutableStateOf("") }
+                    var ttl by remember { mutableStateOf(TokenTtl.NEVER) }
 
                     Text("A new token can call:", style = MaterialTheme.typography.labelMedium)
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -552,13 +595,30 @@ private fun ServerScreen() {
                         }
                     }
 
+                    OutlinedTextField(
+                        value = label,
+                        onValueChange = { label = it },
+                        label = { Text("Label (optional)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text("Expires:", style = MaterialTheme.typography.labelMedium)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TokenTtl.entries.forEach { opt ->
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(end = 4.dp)) {
+                                androidx.compose.material3.RadioButton(selected = ttl == opt, onClick = { ttl = opt })
+                                Text(opt.label, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
                     OutlinedButton(onClick = {
                         val allowed: Set<String>? = when (scopeMode) {
                             TokenScopeMode.FULL -> null
                             TokenScopeMode.READ_ONLY -> Capabilities.lowRiskPresetIds()
                             TokenScopeMode.CUSTOM -> custom.filterValues { it }.keys.toSet()
                         }
-                        TokenStore.generate(TokenStore.nextClientName(tokens), allowed)
+                        TokenStore.generate(TokenStore.nextClientName(tokens), allowed, label.trim(), ttl.ms)
+                        label = ""
                     }) {
                         Text("Generate token")
                     }
@@ -575,11 +635,14 @@ private fun ServerScreen() {
                     }
                     tokens.forEach { t ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                "${t.name}  ·  ${scopeLabel(t.scope)}",
-                                Modifier.weight(1f),
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
+                            Column(Modifier.weight(1f)) {
+                                Text(tokenTitle(t), style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    tokenSubtitle(t, lastUsed[t.name]),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                             TextButton(onClick = { TokenStore.revoke(t.name) }) { Text("Revoke") }
                         }
                     }
