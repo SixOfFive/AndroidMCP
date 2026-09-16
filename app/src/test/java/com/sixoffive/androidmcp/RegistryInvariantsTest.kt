@@ -106,4 +106,41 @@ class RegistryInvariantsTest {
         Capabilities.REGISTRY.forEach { assertEquals(it, Capabilities.byId(it.id)) }
         assertEquals(null, Capabilities.byId("no_such_tool"))
     }
+
+    @Test
+    fun `no-intervention set needs no permission, approval, or elevation`() {
+        Capabilities.noInterventionIds().forEach { id ->
+            val cap = Capabilities.byId(id)!!
+            assertTrue(cap.permissions.isEmpty(), "'$id' needs a runtime permission — not zero-intervention")
+            assertTrue(!cap.highImpact, "'$id' needs per-call approval — not zero-intervention")
+            assertTrue(!cap.rootRequired, "'$id' needs elevated access — not zero-intervention")
+        }
+    }
+
+    @Test
+    fun `Enable-all never arms a capability that acts on the world`() {
+        // The "Enable all (no prompts)" button must never silently turn on a high-impact tool —
+        // those must always be a deliberate per-capability choice.
+        val highImpact = Capabilities.REGISTRY.filter { it.highImpact }.map { it.id }.toSet()
+        assertTrue(
+            Capabilities.noInterventionIds().intersect(highImpact).isEmpty(),
+            "no-intervention set leaked high-impact capabilities: ${Capabilities.noInterventionIds().intersect(highImpact)}",
+        )
+    }
+
+    @Test
+    fun `no-intervention set is exactly the known safe read-and-low-risk capabilities`() {
+        // A tripwire: a new capability with no permission, no approval and no elevation joins
+        // "Enable all" automatically — this forces that to be a conscious decision, the same way
+        // the default-on test guards what starts enabled.
+        assertEquals(
+            setOf(
+                "list_capabilities", "device_info", "battery_status", "read_sensors",
+                "write_clipboard", "wifi_info", "network_info", "storage_info", "thermal_status",
+                "screen_info", "volume_info", "torch", "vibrate", "list_packages", "toast",
+                "open_settings",
+            ),
+            Capabilities.noInterventionIds(),
+        )
+    }
 }

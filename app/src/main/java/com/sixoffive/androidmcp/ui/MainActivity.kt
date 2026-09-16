@@ -189,6 +189,33 @@ private fun ServerScreen() {
                 }
             }
 
+            // ---- quick bulk enable / disable ----
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = { ConfigStore.enableCaps(Capabilities.noInterventionIds()) },
+                            modifier = Modifier.weight(1f),
+                        ) { Text("Enable all (no prompts)") }
+                        OutlinedButton(
+                            onClick = {
+                                ConfigStore.disableAllCaps()
+                                ConfigStore.setMaster(false)
+                                McpService.stop(ctx)
+                            },
+                            modifier = Modifier.weight(1f),
+                        ) { Text("Disable all & stop") }
+                    }
+                    Text(
+                        "'Enable all' turns on only capabilities that need no permission, per-call approval, " +
+                            "or Shizuku/root — everything usable with zero further taps. 'Disable all' turns every " +
+                            "capability off and stops and disables the server.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
             // ---- server: run state + bind ----
             item {
                 SectionCard("Server") {

@@ -421,6 +421,22 @@ object Capabilities {
 
     fun byId(id: String): CapabilityMeta? = REGISTRY.firstOrNull { it.id == id }
 
+    /**
+     * Capabilities that can be enabled AND used with **no further input from the user**: no runtime
+     * permission to grant, no per-call Allow/Deny approval, and no elevated (Shizuku/root) access.
+     * The three special-access capabilities (`read_notifications` → notification-listener,
+     * `list_files` → SAF folder grant, `capture_screenshot` → MediaProjection consent) are all
+     * `highImpact`, so they fall out via that flag — no id needs to be named here. Metadata-only, so
+     * it stays a pure unit test with no device or Context.
+     *
+     * Backs the "Enable all (no prompts)" button. Anything not in this set stays for the user to
+     * enable deliberately, because turning it on would (or its use would) require a grant or a tap.
+     */
+    fun noInterventionIds(): Set<String> =
+        REGISTRY.filter { it.permissions.isEmpty() && !it.highImpact && !it.rootRequired }
+            .map { it.id }
+            .toSet()
+
     /** UI grouping so the (now 40-entry) list is navigable. Ordered; headers shown in this order. */
     data class Category(val id: String, val label: String)
 

@@ -94,6 +94,16 @@ object ConfigStore {
         }
     }
 
+    /** Turn ON a set of capabilities in a single write (union with whatever is already on). */
+    fun enableCaps(ids: Set<String>) = scope.launch {
+        app.configDataStore.edit { p -> p[KEY_ENABLED] = (p[KEY_ENABLED] ?: emptySet()) + ids }
+    }
+
+    /** Turn OFF every capability at once. `list_capabilities` stays implicitly on (see [isEnabled]). */
+    fun disableAllCaps() = scope.launch {
+        app.configDataStore.edit { p -> p[KEY_ENABLED] = emptySet() }
+    }
+
     fun setBind(mode: String) = scope.launch { app.configDataStore.edit { it[KEY_BIND] = mode } }
     fun setPort(port: Int) = scope.launch { app.configDataStore.edit { it[KEY_PORT] = port } }
     fun setAllowBrowser(on: Boolean) = scope.launch { app.configDataStore.edit { it[KEY_BROWSER] = on } }
