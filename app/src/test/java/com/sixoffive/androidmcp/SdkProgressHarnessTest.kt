@@ -1,7 +1,9 @@
 package com.sixoffive.androidmcp
 
 import android.content.Context
+import android.content.pm.PackageManager
 import com.sixoffive.androidmcp.core.AppConfig
+import com.sixoffive.androidmcp.core.Capabilities
 import com.sixoffive.androidmcp.core.ClientToken
 import com.sixoffive.androidmcp.core.ConfigStore
 import com.sixoffive.androidmcp.core.TokenStore
@@ -71,6 +73,101 @@ class SdkProgressHarnessTest {
         } finally {
             server.stop(100, 500)
         }
+    }
+
+    /**
+     * Does the reference SDK deserialise EVERY real tool schema off the wire?
+     *
+     * v2 checked this once by hand against the K70. This automates it: `tools/list` runs through the
+     * real [Mcp.handle], so the SDK parses the real 40 tool definitions (with `required`, bounds and
+     * annotations) into its own `Tool` type. A bare inputSchema that a unit test still calls valid,
+     * but the SDK rejects, would fail here.
+     */
+    @Test
+    fun `the reference SDK deserialises every real tool schema`() {
+        assumeTrue("needs -Dandroidmcp.sdk=1 and uv", System.getProperty("androidmcp.sdk") == "1")
+
+        val hash = MessageDigest.getInstance("SHA-256").digest(token.toByteArray())
+            .joinToString("") { "%02x".format(it) }
+        TokenStore.tokens.value = listOf(ClientToken(name = "harness", hashHex = hash))
+        ConfigStore.state.value = AppConfig(allowBrowser = false)
+
+        // toolDef asks HardwareCheck about each tool, so give the mocked Context a PackageManager
+        // that reports every feature present — the subject here is the schemas, not this host's
+        // hardware (the vibrator check falls back to "absent" safely and still lists the tool).
+        val pm = Mockito.mock(PackageManager::class.java)
+        Mockito.`when`(pm.hasSystemFeature(Mockito.anyString())).thenReturn(true)
+        val hwCtx: Context = Mockito.mock(Context::class.java)
+        Mockito.`when`(hwCtx.packageManager).thenReturn(pm)
+
+        val server = embeddedServer(CIO, host = "127.0.0.1", port = 0) {
+            installRoutes { body, _, header, sse -> Mcp.handle(hwCtx, body, "harness", header, sse) }
+        }
+        server.start(wait = false)
+        try {
+            val port = runBlocking { server.resolvedConnectors().first().port }
+            val out = runSchemaSdk(port)
+            val expected = Capabilities.REGISTRY.size
+            // tool_count == expected already proves it: the SDK's Tool model requires inputSchema,
+            // so a malformed one would raise on parse and this count would never print. The second
+            // assertion re-confirms each schema is an object schema, read via model_dump so it does
+            // not depend on the SDK's Python attribute name.
+            assertTrue(out.contains("\"tool_count\": $expected"), "the SDK did not parse all $expected tools:\n$out")
+            assertTrue(out.contains("\"all_object_input_schema\": true"), "a tool's inputSchema is not a valid object schema:\n$out")
+        } finally {
+            server.stop(100, 500)
+        }
+    }
+
+    private fun runSchemaSdk(port: Int): String {
+        val script = """
+import anyio, json
+from mcp import ClientSession
+import contextlib
+import mcp.client.streamable_http as sh
+_new = getattr(sh, "streamable_http_client", None)
+
+@contextlib.asynccontextmanager
+async def connect(url, headers):
+    if _new is not None:
+        import httpx2
+        async with httpx2.AsyncClient(headers=headers) as hc:
+            async with _new(url, http_client=hc) as streams:
+                yield streams
+    else:
+        async with sh.streamablehttp_client(url, headers=headers) as streams:
+            yield streams
+
+async def main():
+    url = "http://127.0.0.1:$port/mcp"
+    hdrs = {"Authorization": "Bearer $token"}
+    async with connect(url, hdrs) as streams:
+        r, w = streams[0], streams[1]
+        async with ClientSession(r, w) as s:
+            await s.initialize()
+            tools = (await s.list_tools()).tools
+            def schema(t):
+                # The SDK's field name varies by version (inputSchema vs input_schema, with an
+                # alias), so look under both spellings in both dump modes.
+                for d in (t.model_dump(by_alias=True), t.model_dump()):
+                    for k in ("inputSchema", "input_schema"):
+                        v = d.get(k)
+                        if isinstance(v, dict):
+                            return v
+                return None
+            ok = all(isinstance(schema(t), dict) and schema(t).get("type") == "object" for t in tools)
+            print(json.dumps({"tool_count": len(tools), "all_object_input_schema": ok,
+                              "first_keys": sorted(tools[0].model_dump(by_alias=True).keys()) if tools else []}))
+
+anyio.run(main)
+""".trimIndent()
+        val p = ProcessBuilder("uv", "run", "--quiet", "--with", "mcp", "python", "-c", script)
+            .redirectErrorStream(true)
+            .start()
+        val out = p.inputStream.bufferedReader().readText()
+        p.waitFor(180, TimeUnit.SECONDS)
+        println(out)
+        return out
     }
 
     /** Real handshake via [Mcp.handle]; a hand-rolled slow tool, since a real one needs a device. */
