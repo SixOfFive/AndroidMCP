@@ -45,6 +45,10 @@ gauth-backup/
 *.keystore
 *.jks
 
+# ---- Python bytecode (from scripts/verify) ----
+__pycache__/
+*.pyc
+
 # ---- OS cruft ----
 .DS_Store
 Thumbs.db

@@ -20,15 +20,128 @@ connect at all are the server switch and a client token.
 > installer are built and tested on real hardware (a Samsung Galaxy A03s and a Unisoc tablet),
 > including live cross-machine connections over **LAN** and **Tailscale**. The JSON-RPC and
 > HTTP layers are covered by **151 JVM unit tests**, and it is **driven end to end by three real MCP
-> clients** — the official MCP Python SDK, Claude Code itself, and the MCP Inspector.
-> See [Caveats](#caveats).
+> clients** — the official MCP Python SDK, Claude Code itself, and the MCP Inspector. Claude
+> Desktop has not connected yet: it needs a stdio bridge. See [Caveats](#caveats).
+>
+> **Moving to another machine?** Start at [Picking this up on another machine](#picking-this-up-on-another-machine).
+
+---
+
+## Picking this up on another machine
+
+*Written 2026-09-16 as a handoff. Development is moving from the original Debian laptop to a
+different machine, which now has the tablet attached. Nothing below assumes anything from the old
+machine.*
+
+### 1. Get the code
+
+```bash
+git clone root@192.168.15.23:sixoffive/androidmcp.git <subfolder>
+```
+
+On the original machine `origin` is spelled `git@gitlab:sixoffive/androidmcp.git`. There, `gitlab`
+is an **SSH alias** from `~/.ssh/config` (`HostName 192.168.15.23`, `User root`), and that alias
+won't resolve anywhere else. Either clone by address as above, or copy that `Host gitlab` block
+along with a key the server accepts. If the new machine isn't on that LAN, carry the history across
+with `git bundle create androidmcp.bundle --all` and then `git clone androidmcp.bundle <subfolder>`.
+
+### 2. A toolchain known to build this
+
+| | version |
+|---|---|
+| JDK | 21 (17+ works) |
+| Gradle | 8.11.1 — wrapper, committed |
+| Android Gradle Plugin | 8.7.3 |
+| Kotlin | 2.0.21 |
+| Ktor | 2.3.12 |
+| Android SDK | platforms `android-34` and `android-35`, plus build-tools |
+
+Point Gradle at the SDK with `ANDROID_HOME`, or with `sdk.dir=` in `local.properties` (which is
+gitignored). On Windows, use `gradlew.bat`. `scripts/build-and-install.sh` needs bash (Git Bash or
+WSL).
+
+### 3. Signing — read this before `adb install`
+
+Unless a real key is configured, a release build is signed with **the building machine's**
+`~/.android/debug.keystore`. The APK on the tablet now was built on the original machine, so it
+carries that machine's certificate:
+
+    SHA-256  58:BC:1A:41:02:72:2E:38:D3:EE:B6:80:8A:A5:BD:AB:5B:25:65:1B:10:A7:7A:DC:F0:4B:D4:83:E3:C0:85:EC
+
+Any other machine has a different debug key, so installing over the existing app fails with
+`INSTALL_FAILED_UPDATE_INCOMPATIBLE`. Check before installing (`apksigner` lives in
+`$ANDROID_HOME/build-tools/<version>/`):
+
+```bash
+apksigner verify --print-certs app/build/outputs/apk/release/app-release.apk | grep SHA-256
+```
+
+If the fingerprint differs, pick one of these:
+
+- **Uninstall first:** `adb uninstall com.sixoffive.androidmcp`. This wipes tokens, folder grants,
+  capability toggles and special-access approvals. The tablet holds nothing worth keeping right now
+  (see §5), so this is the simple choice.
+- **Use one real key everywhere:** set `ANDROIDMCP_KEYSTORE`, `ANDROIDMCP_KEYSTORE_PASSWORD`,
+  `ANDROIDMCP_KEY_ALIAS` and `ANDROIDMCP_KEY_PASSWORD` (see `app/build.gradle.kts`). This is the
+  right long-term fix, though the first install with the new key still needs the uninstall.
+
+### 4. Build, install, verify
+
+```bash
+./gradlew :app:testDebugUnitTest          # 151 JVM tests; no device needed
+./gradlew :app:assembleRelease            # use release for anything left running
+adb install -r app/build/outputs/apk/release/app-release.apk
+adb shell dumpsys package com.sixoffive.androidmcp | grep pkgFlags   # must NOT say DEBUGGABLE
+adb shell am start -n com.sixoffive.androidmcp/.ui.MainActivity
+```
+
+The launcher activity is **`.ui.MainActivity`**. `am start -n …/.MainActivity` fails with
+`START_CLASS_NOT_FOUND`.
+
+### 5. The tablet's state when it left the original machine
+
+Last touched on **2026-09-09**, and not checked since. Unless something has changed it, expect:
+
+- the release build described above, not debuggable
+- the server **running** with bind **lan** on `192.168.15.123:8765`. That address is from the
+  original LAN and will differ on another network. The server doesn't survive a reboot, because
+  start on boot isn't armed.
+- one token, **`client-1`**. **Revoke it and mint a fresh one:** its value passed through a session
+  transcript.
+- capabilities: `battery_status` on, plus the one out-of-box default under *Core & device*.
+  Everything else is off.
+- notification permission **granted**. Without it the approval prompt can't appear, so every
+  high-impact call waits out its 25 s and then refuses.
+- no SAF folder grants, and start on boot not armed
+
+### 6. First run on the device
+
+1. Allow notifications when asked.
+2. Enable only the capabilities you need. Each card states what it exposes.
+3. Pick a bind. `loopback` with `adb forward` needs nothing from the network; use `lan` or
+   `tailscale` for a client on another machine.
+4. Turn the **Server** switch on.
+5. Press **Generate token**, then take the token with **Copy connect command** rather than copying
+   it off the screen by eye. Tokens mix `0`/`O` and `l`/`I`, and a misread token just returns 401.
+   (That lesson came from misreading one.)
+
+### 7. Things that look like bugs but aren't
+
+| symptom | actual cause |
+|---|---|
+| an MCP client reports `SSE stream ended without a response` | the `adb forward` dropped mid-stream, and the server is fine. Check `adb forward --list`, then forward again. |
+| TLS works once, then every request hangs | a minified build. Minification is off for exactly this reason; see [app/proguard-rules.pro](app/proguard-rules.pro). Any TLS smoke test needs **two** requests. |
+| the app disappeared after a test run | `connectedDebugAndroidTest` **uninstalls** the app when it finishes, wiping its data. Reinstall the release APK. |
+| every high-impact call refuses after 25 s | the notification permission is off, so the approval prompt can't be shown. |
+| `read_clipboard` comes back empty | Android 10+ only lets the foreground app read the clipboard. |
+| Claude Desktop quietly drops the server | its config file accepts only **stdio** entries. See [Connecting a client](#connecting-a-client). |
 
 ---
 
 ## Requirements
 
 **To build:**
-- **JDK 17+** (JDK 21 is fine).
+- **JDK 17+** (built with 21). Full versions are listed [above](#2-a-toolchain-known-to-build-this).
 - An **Android SDK** with platforms 34/35 and build-tools (e.g. `~/Android/Sdk`). Set
   `ANDROID_HOME`, or put `sdk.dir=/path/to/Android/Sdk` in `local.properties`.
 - **adb** on your `PATH` (to install / test).
@@ -252,18 +365,26 @@ without an uninstall, which would wipe tokens, folder grants and special-access 
 
 ### Tests
 
-The protocol, the HTTP layer, SAF containment, the TLS cert and the tool schemas all run on a
-plain JVM — no device or emulator needed:
-
 ```bash
-./gradlew :app:testDebugUnitTest
+./gradlew :app:testDebugUnitTest           # 151 JVM tests; no device, no emulator
+./gradlew :app:connectedDebugAndroidTest   # 4 instrumentation tests; needs a device
+./gradlew :app:testDebugUnitTest --tests '*SdkProgressHarness*' -Dandroidmcp.sdk=1
+                                           # reference MCP Python SDK against the real engine
+                                           # (needs uv and network access, so it's opt-in)
 ```
 
-Anything that needs real hardware (camera, mic, screen capture, the ContentProvider-backed
-readers, Shizuku/root) is deliberately **not** in that suite and stays on manual on-device
-verification — see [scripts/verify/](scripts/verify/) for the tools that do it: driving the server
-with the official MCP SDK, tapping the wire to see what a client really sends, and serving the
-dashboard against a device.
+The JVM suite covers the protocol, the HTTP layer, SAF containment, the TLS keystore, the tool
+schemas and progress streaming. It also checks, over real loopback sockets, that both Ktor engines
+flush every write. Keep this one green; it never needs hardware.
+
+The instrumentation suite is deliberately **not** wired into `check`. It holds a main-thread
+DataStore read, which is falsifying: it catches a boot ANR. It also holds camera and mic
+repeat-call smoke tests, which measurably do *not* catch the resource leaks they were written for
+(see the v3 roadmap). **Running it uninstalls the app**, so reinstall the release APK afterwards.
+
+Everything else is checked on the device with [scripts/verify/](scripts/verify/). Those tools drive
+the server with the official MCP SDK, watch progress notifications during a real approval wait, tap
+the wire to show what a client actually sends, and serve the dashboard against a device.
 
 ---
 
@@ -297,9 +418,31 @@ claude mcp add --transport http tablet http://100.127.216.3:8765/mcp --header "A
                        "headers": { "Authorization": "Bearer <TOKEN>" } } } }
 ```
 
-Claude Desktop / claude.ai cloud connectors dial from Anthropic's servers and need a
-public URL, so reach the device through a **local `mcp-remote` stdio bridge** on a
-tailnet-connected machine rather than exposing it publicly.
+**MCP Inspector** is the reference conformance client. It needs **Node ≥ 22.19**, since no release
+supports Node 20. Run `npx @modelcontextprotocol/inspector` for the web UI; `--cli` is scriptable:
+```bash
+npx @modelcontextprotocol/inspector --cli http://<host>:8765/mcp --transport http \
+  --header "Authorization: Bearer <TOKEN>" --method tools/list
+```
+
+**Claude Desktop hasn't connected yet.** Its `claude_desktop_config.json` accepts **only stdio**
+entries. The validator bundled in the app (1.40609.0) is `{ command, args?, env?, extensionId? }`,
+so an entry with `type`/`url`/`headers` gets logged as `Skipped invalid MCP server config entries`,
+then **silently deleted** the next time the app writes its config. Custom connectors added through
+the app's UI are a separate mechanism: they dial from Anthropic's servers, so they'd need a public
+URL. The way in is the `mcp-remote` stdio bridge. This entry hasn't been tried:
+```jsonc
+"mcpServers": {
+  "androidmcp": {
+    "command": "npx",
+    "args": ["mcp-remote", "http://<host>:8765/mcp", "--allow-http",
+             "--header", "Authorization:${AUTH_HEADER}"],  // no space after ':' (Windows escaping)
+    "env": { "AUTH_HEADER": "Bearer <TOKEN>" }
+  }
+}
+```
+A non-HTTPS URL needs `--allow-http`. `mcp-remote` also has `--header-file`, which keeps the token
+out of the process list. Either way, the credential ends up stored on disk.
 
 ---
 
@@ -335,11 +478,9 @@ mic (`./gradlew :app:connectedDebugAndroidTest`, never wired into `check`). Rema
   (which negotiates down from its own newer revision), and the **MCP Inspector 2.6.0** — which
   reports the connection as `MCP 2025-06-18`, renders each tool's `title` and `READ-ONLY` badge from
   the annotations, and displays the refusal envelope's `structuredContent` in full.
-- **Claude Desktop is configured but not yet confirmed.** The entry is in
-  `~/.config/Claude/claude_desktop_config.json` and matches the shape the app's own bundled
-  validator accepts (`type: "http" | "streamable-http"`, `url`, optional `headers`). It needs an
-  app restart to load, which has not happened yet. Note this stores a bearer token in plaintext on
-  disk.
+- **Claude Desktop hasn't connected.** A direct HTTP entry was tried and rejected, because its
+  config file accepts only stdio servers. It needs the `mcp-remote` bridge (see
+  [Connecting a client](#connecting-a-client)), which hasn't been tried yet.
 - **TLS pulls in the Netty engine**, because CIO cannot serve HTTPS at all — and there is no
   alternative: the Ktor issue is open since 2019, and the servlet-container engines are not
   viable on Android. Netty is ~2.0 MB, about 7% of the APK; the caveat here used to blame it for
@@ -507,10 +648,10 @@ The v1 list below was fully checked off; this is its successor.
 
 **Open, and decisions taken:**
 
-- [x] **The MCP Inspector 2.6.0 — connected.** Every premise of the old entry was wrong, which is
-      the useful part. `corepack` is *not* broken (0.24.0 works), and it yields `npm`/`npx` into
-      `~/.local/bin` with **no sudo at all** — `corepack enable --install-directory ~/.local/bin npm`.
-      Claude Desktop does *not* dial from Anthropic's servers for a config-file entry, and it is
+- [x] **The MCP Inspector 2.6.0 — connected.** Most premises of the old entry turned out wrong,
+      and that was the useful part. `corepack` is *not* broken (0.24.0 works), and it puts
+      `npm`/`npx` into `~/.local/bin` with **no sudo at all**:
+      `corepack enable --install-directory ~/.local/bin npm`. And Claude Desktop turned out to be
       **already installed on this Debian box** (`/usr/bin/claude-desktop` 1.40609.0).
 
       The real blocker was none of those: **no Inspector release supports Node 20**. Even 0.22.0
@@ -530,11 +671,24 @@ The v1 list below was fully checked off; this is its successor.
       **Protocol Era** selector — *Legacy (2025-11-25 handshake)* / *Auto (probes `server/discover`,
       falls back)* / *Modern (2026-07-28)*. The dual-era handshake this server was hardened against
       is a first-class client setting, not a Claude Code quirk.
-- [ ] **Claude Desktop — configured, not yet confirmed.** The entry is written to
-      `~/.config/Claude/claude_desktop_config.json` and matches the shape the app's own bundled
-      validator accepts: `type: "http" | "streamable-http"` (both normalised to `http`), `url`,
-      optional `headers`. No `mcp-remote` bridge is needed. It does not hot-reload, so it awaits an
-      app restart. Caveat worth stating: this puts a **bearer token in plaintext** in a config file.
+- [ ] **Claude Desktop: tried, rejected, and the reason recorded.** On 2026-09-09 a direct entry
+      (`type: "http"`, `url`, `headers`) went into `claude_desktop_config.json`. The problem was
+      *not* a missing restart. The app re-read the file within minutes and, on every read, logged
+      `Skipped invalid MCP server config entries: { invalidServers: ['androidmcp-phone'] }`. Then it
+      **deleted the entry** the next time it wrote its config. That took the plaintext token with
+      it, which was the one good outcome.
+
+      The mistake is worth keeping. The shape had been "confirmed" against a schema read out of
+      `app.asar` (`type: ["http","streamable-http"], url, headers?`), but that schema belongs to a
+      different part of the bundle. The validator the desktop config actually uses is
+      `mcpServers: record(string, Jm)`, where `Jm = { command, args?, env?, extensionId? }`: that
+      is, **stdio only**. Finding *a* schema that matches, somewhere in a 33 MB bundle, proves
+      nothing; follow the reference from the code that emits the error. Likewise, "the app didn't
+      pick it up" should have been checked in the app's own log rather than assumed.
+
+      So the original note here was right after all: Claude Desktop needs the `mcp-remote` stdio
+      bridge. The next step, still untried, is the entry under
+      [Connecting a client](#connecting-a-client).
 - [x] **`outputSchema` — deliberately NOT declared, on the spec's own terms.** The rule is
       unconditional: *"If an output schema is provided: Servers MUST provide structured results
       that conform to this schema."* There is no carve-out for errors. This server's **most common
