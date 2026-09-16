@@ -424,6 +424,9 @@ supports Node 20. Run `npx @modelcontextprotocol/inspector` for the web UI; `--c
 npx @modelcontextprotocol/inspector --cli http://<host>:8765/mcp --transport http \
   --header "Authorization: Bearer <TOKEN>" --method tools/list
 ```
+One caveat: the web UI says *"Secrets: OS keychain"*, yet a header added under
+*Custom Headers* is written to `~/.mcp-inspector/mcp.json` **in plaintext** (mode 0600; seen on a
+Linux box with no `secret-tool`). Remove the server entry when you're done with it.
 
 **Claude Desktop hasn't connected yet.** Its `claude_desktop_config.json` accepts **only stdio**
 entries. The validator bundled in the app (1.40609.0) is `{ command, args?, env?, extensionId? }`,
