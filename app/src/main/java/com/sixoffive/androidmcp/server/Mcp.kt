@@ -24,6 +24,7 @@ import com.sixoffive.androidmcp.core.ConfigStore
 import com.sixoffive.androidmcp.core.GateEngine
 import com.sixoffive.androidmcp.core.Elevated
 import com.sixoffive.androidmcp.core.GateResult
+import com.sixoffive.androidmcp.core.TokenStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -388,6 +389,15 @@ object Mcp {
             return error(id, -32602, "Unknown tool: $name")
         }
 
+        // Per-token scope. Checked before the capability gate: whether the *owner* enabled a tool is
+        // a separate question from whether *this token* is allowed to call it at all. A scoped token
+        // asking for a tool outside its scope is refused here, so it cannot even learn (via the gate
+        // refusal's remediation) how to unblock a capability it was never granted.
+        if (!TokenStore.allows(client, cap.id)) {
+            AuditLog.record(cap.id, client, false, "OUT_OF_TOKEN_SCOPE")
+            return result(id, scopeRefusal(cap))
+        }
+
         // On Dispatchers.IO, not the request coroutine: the gate is mostly cheap permission
         // lookups, but for a `rootRequired` capability it spawns `su -c id` to detect elevated
         // access. On a Magisk device whose superuser prompt goes unanswered that probe runs to its
@@ -605,6 +615,21 @@ object Mcp {
             put("data_exposed", cap.dataExposed)
             put("remediation", "High-impact tool: approve the on-device notification prompt, or arm this capability, then retry.")
             put("retriable", true)
+        },
+        isError = true,
+    )
+
+    private fun scopeRefusal(cap: CapabilityMeta): JsonObject = structuredResult(
+        "${cap.title} is not permitted for this client token — it is scoped to a subset of capabilities that does not include it.",
+        buildJsonObject {
+            put("status", "capability_out_of_scope")
+            put("capability", cap.id)
+            put("reason_code", "OUT_OF_TOKEN_SCOPE")
+            put("gate_failed", "token_scope")
+            put("remediation", "This token cannot call '${cap.id}'. Use a token whose scope includes it, or widen this token's scope in the androidmcp app.")
+            // Not retriable with the same token: no on-device action unblocks it, unlike the toggle
+            // or permission gates. The owner must re-scope or mint a different token.
+            put("retriable", false)
         },
         isError = true,
     )

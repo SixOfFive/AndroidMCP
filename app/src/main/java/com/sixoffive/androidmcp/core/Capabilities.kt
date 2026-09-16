@@ -437,6 +437,16 @@ object Capabilities {
             .map { it.id }
             .toSet()
 
+    /**
+     * The "Read-only" preset for a scoped client token: the low-risk tools that never trigger a
+     * per-call approval and need no elevation — `!highImpact && !rootRequired`. Note this is
+     * "low-risk", not literally read-only: it includes trivial writes (torch, vibrate, toast,
+     * write_clipboard) and excludes *sensitive* reads (read_sms, get_contacts, capture_screenshot),
+     * which are high-impact by design. Use the custom per-capability picker for anything finer.
+     */
+    fun lowRiskPresetIds(): Set<String> =
+        REGISTRY.filter { !it.highImpact && !it.rootRequired }.map { it.id }.toSet()
+
     /** UI grouping so the (now 40-entry) list is navigable. Ordered; headers shown in this order. */
     data class Category(val id: String, val label: String)
 

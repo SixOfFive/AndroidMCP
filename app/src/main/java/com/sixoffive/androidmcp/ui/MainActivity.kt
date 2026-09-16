@@ -65,6 +65,19 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+/** Scope choice for a newly generated client token. */
+private enum class TokenScopeMode(val label: String) {
+    FULL("Full access"), READ_ONLY("Read-only"), CUSTOM("Custom"),
+}
+
+/** Short human summary of a token's scope, for the token list. */
+private fun scopeLabel(scope: Set<String>?): String = when {
+    scope == null -> "full access"
+    scope.isEmpty() -> "no capabilities"
+    scope == Capabilities.lowRiskPresetIds() -> "read-only"
+    else -> "${scope.size} " + if (scope.size == 1) "capability" else "capabilities"
+}
+
 @Composable
 private fun AppTheme(content: @Composable () -> Unit) {
     val dark = isSystemInDarkTheme()
@@ -492,7 +505,61 @@ private fun ServerScreen() {
             // ---- tokens ----
             item {
                 SectionCard("Client tokens") {
-                    OutlinedButton(onClick = { TokenStore.generate(TokenStore.nextClientName(tokens)) }) {
+                    var scopeMode by remember { mutableStateOf(TokenScopeMode.FULL) }
+                    // capId -> checked, for the Custom picker; pre-seeded to the low-risk preset so
+                    // a custom token starts safe and the owner widens or narrows from there.
+                    val custom = remember {
+                        androidx.compose.runtime.mutableStateMapOf<String, Boolean>().apply {
+                            val low = Capabilities.lowRiskPresetIds()
+                            Capabilities.REGISTRY.forEach { put(it.id, it.id in low) }
+                        }
+                    }
+
+                    Text("A new token can call:", style = MaterialTheme.typography.labelMedium)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TokenScopeMode.entries.forEach { m ->
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(end = 4.dp)) {
+                                androidx.compose.material3.RadioButton(
+                                    selected = scopeMode == m,
+                                    onClick = { scopeMode = m },
+                                )
+                                Text(m.label, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                    Text(
+                        when (scopeMode) {
+                            TokenScopeMode.FULL -> "Any capability the owner has enabled."
+                            TokenScopeMode.READ_ONLY -> "Only low-risk tools that need no per-call approval (no camera/mic/SMS/contacts/shell, no state changes beyond trivial ones)."
+                            TokenScopeMode.CUSTOM -> "Exactly the tools you tick below. list_capabilities is always allowed."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (scopeMode == TokenScopeMode.CUSTOM) {
+                        Capabilities.REGISTRY.forEach { c ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                androidx.compose.material3.Checkbox(
+                                    checked = custom[c.id] ?: false,
+                                    onCheckedChange = { custom[c.id] = it },
+                                )
+                                Text(
+                                    "${c.title}  ·  ${c.id}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                        }
+                    }
+
+                    OutlinedButton(onClick = {
+                        val allowed: Set<String>? = when (scopeMode) {
+                            TokenScopeMode.FULL -> null
+                            TokenScopeMode.READ_ONLY -> Capabilities.lowRiskPresetIds()
+                            TokenScopeMode.CUSTOM -> custom.filterValues { it }.keys.toSet()
+                        }
+                        TokenStore.generate(TokenStore.nextClientName(tokens), allowed)
+                    }) {
                         Text("Generate token")
                     }
                     if (minted.isNotEmpty()) {
@@ -508,7 +575,11 @@ private fun ServerScreen() {
                     }
                     tokens.forEach { t ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(t.name, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                "${t.name}  ·  ${scopeLabel(t.scope)}",
+                                Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
                             TextButton(onClick = { TokenStore.revoke(t.name) }) { Text("Revoke") }
                         }
                     }
