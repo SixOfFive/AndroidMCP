@@ -129,6 +129,11 @@ dependencies {
     implementation(libs.ktor.server.netty)
     implementation(libs.kotlinx.serialization.json)
 
+    // QR encoder for the "scan to connect" code. R8 is off (see proguard-rules.pro), so this ships
+    // whole (~0.5 MB). Only the encoder is used at runtime; the reader is used by unit tests to
+    // round-trip the connect string.
+    implementation(libs.zxing.core)
+
     testImplementation(libs.junit)
     testImplementation(libs.kotlin.test.junit)
     testImplementation(libs.kotlinx.coroutines.test)

@@ -630,6 +630,12 @@ private fun ServerScreen() {
                             Text("$name (new — shown once):", style = MaterialTheme.typography.labelMedium)
                             Mono(cmd)
                             TextButton(onClick = { clipboard.setText(AnnotatedString(cmd)) }) { Text("Copy connect command") }
+                            Text(
+                                "…or scan on another machine (no clipboard needed):",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            QrCode(cmd, sizeDp = 220)
                             HorizontalDivider()
                         }
                     }

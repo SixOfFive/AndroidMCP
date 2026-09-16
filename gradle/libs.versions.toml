@@ -14,6 +14,7 @@ androidxTestRunner = "1.5.2"
 androidxTestRules = "1.5.0"
 coroutinesTest = "1.8.1"
 mockito = "5.14.2"
+zxing = "3.5.3"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -37,6 +38,7 @@ ktor-serialization-json = { group = "io.ktor", name = "ktor-serialization-kotlin
 ktor-tls-certs = { group = "io.ktor", name = "ktor-network-tls-certificates", version.ref = "ktor" }
 ktor-server-netty = { group = "io.ktor", name = "ktor-server-netty", version.ref = "ktor" }
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serialization" }
+zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing" }
 
 # --- test only ---
 junit = { group = "junit", name = "junit", version.ref = "junit" }
