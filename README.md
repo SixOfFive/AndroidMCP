@@ -701,9 +701,14 @@ The v1 list below was fully checked off; this is its successor.
       first moving the refusal payload out of `structuredContent`, which would break the documented
       contract for a marginal gain. A test asserts no `outputSchema` appears while that holds.
 - [ ] **No server-initiated SSE stream** (`GET /mcp` is a 405, which the spec permits), so no
-      channel for `tools/list_changed`. Claude Code tolerates the 405; revisit only if a real client
-      demands it. Progress notifications no longer need it — they ride the call's own response
-      (v3).
+      channel for `tools/list_changed` — and, checked again, **nothing to send on it even if there
+      were.** `tools/list` is invariant at runtime: enabling or disabling a capability changes the
+      *gate*, not the *listing*. Every tool is always listed with a static description (the
+      `[currently enabled/disabled]` suffix was removed in v2 precisely because clients cache
+      `tools/list`), so a toggle produces no list change to announce. Live state is read through
+      `list_capabilities` and the per-call gate refusal instead. Claude Code tolerates the 405;
+      revisit only if a real client demands a stream. Progress notifications no longer need it —
+      they ride the call's own response (v3).
 
 ### v3 — the release build, and three things deliberately not done
 
