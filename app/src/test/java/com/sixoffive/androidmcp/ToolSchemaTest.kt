@@ -109,6 +109,7 @@ class ToolSchemaTest {
             "torch" to "on", "post_notification" to "title", "speak" to "text",
             "notification_action" to "key", "global_action" to "action",
             "tap" to "x", "swipe" to "x", "type_text" to "text",
+            "write_contact" to "name",
         )
         mustRequire.forEach { (tool, arg) ->
             val spec = ToolSchemas.specFor(tool)
@@ -191,11 +192,12 @@ class ToolSchemaTest {
         }
         // The tools that change state outside this app must not claim to be read-only.
         listOf("write_clipboard", "root_shell", "elevated_input", "elevated_settings",
-            "create_calendar_event", "set_volume", "torch", "vibrate", "launch_url", "run_shortcut")
+            "create_calendar_event", "set_volume", "torch", "vibrate", "launch_url", "run_shortcut",
+            "write_contact")
             .forEach { assertTrue(!ToolSchemas.specFor(it).readOnly, "'$it' must not be marked readOnly") }
         // ...and the highest-blast-radius ones must be flagged destructive.
         listOf("root_shell", "elevated_input", "elevated_settings", "write_clipboard", "create_calendar_event",
-            "write_file", "tap", "swipe", "type_text")
+            "write_file", "tap", "swipe", "type_text", "write_contact")
             .forEach { assertTrue(ToolSchemas.specFor(it).destructive, "'$it' must be marked destructive") }
     }
 

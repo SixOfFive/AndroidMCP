@@ -9,6 +9,7 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.location.LocationManager
 import android.provider.CalendarContract.Instances
+import android.provider.ContactsContract
 import android.provider.ContactsContract.CommonDataKinds.Phone
 import android.os.BatteryManager
 import android.os.Build
@@ -823,6 +824,10 @@ object Mcp {
         "tap" -> listOf(textBlk(a11yTap(args)))
         "swipe" -> listOf(textBlk(a11ySwipe(args)))
         "type_text" -> listOf(textBlk(a11yTypeText(args)))
+        "foreground_app" -> listOf(textBlk(foregroundApp(ctx, args)))
+        "media_search" -> listOf(textBlk(mediaSearch(ctx, args)))
+        "record_screen" -> recordScreen(ctx, args)
+        "write_contact" -> listOf(textBlk(writeContact(ctx, args)))
         "elevated_current_app" -> listOf(textBlk(elevatedCurrentApp(ctx)))
         "elevated_settings" -> listOf(textBlk(elevatedSettings(ctx, args)))
         "root_screenshot" -> rootScreenshot()
@@ -1067,6 +1072,197 @@ object Mcp {
         if ((x == null) != (y == null)) throw ToolArgError("pass both 'x' and 'y' together (a field's centre from read_screen), or neither")
         if ((x != null && x < 0) || (y != null && y < 0)) throw ToolArgError("x and y must be >= 0")
         return McpAccessibilityService.typeText(text, x, y)
+    }
+
+    // ---- Wave 5 ----
+
+    private fun foregroundApp(ctx: Context, args: JsonObject): String {
+        val usm = ctx.getSystemService(Context.USAGE_STATS_SERVICE) as android.app.usage.UsageStatsManager
+        val now = System.currentTimeMillis()
+        val sb = StringBuilder()
+
+        // Current foreground app: the most recent foreground/resume event in the last minute.
+        val events = usm.queryEvents(now - 60_000, now)
+        var fgPkg: String? = null
+        val ev = android.app.usage.UsageEvents.Event()
+        while (events.hasNextEvent()) {
+            events.getNextEvent(ev)
+            val resumed = ev.eventType == android.app.usage.UsageEvents.Event.MOVE_TO_FOREGROUND ||
+                (Build.VERSION.SDK_INT >= 29 && ev.eventType == android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED)
+            if (resumed) fgPkg = ev.packageName
+        }
+        sb.append(
+            if (fgPkg == null) "Foreground app: undetermined (screen may be off, or on the launcher)."
+            else "Foreground app: ${appLabel(ctx, fgPkg)} ($fgPkg)",
+        )
+
+        when (args["usage_window"]?.jsonPrimitive?.contentOrNull) {
+            "day", "week" -> {
+                val window = args["usage_window"]!!.jsonPrimitive.content
+                val limit = (args["limit"]?.jsonPrimitive?.intOrNull ?: 10).coerceIn(1, 50)
+                val span = if (window == "week") 7L * 24 * 3600_000 else 24L * 3600_000
+                val top = usm.queryUsageStats(
+                    android.app.usage.UsageStatsManager.INTERVAL_BEST, now - span, now,
+                ).filter { it.totalTimeInForeground > 0 }
+                    .groupBy { it.packageName }
+                    .mapValues { e -> e.value.sumOf { it.totalTimeInForeground } }
+                    .entries.sortedByDescending { it.value }.take(limit)
+                sb.append("\n\nTop apps by foreground time over the last $window:")
+                if (top.isEmpty()) sb.append("\n  (nothing recorded in this window)")
+                top.forEach { (pkg, ms) -> sb.append("\n  ${appLabel(ctx, pkg)} ($pkg): ${fmtDuration(ms)}") }
+            }
+        }
+        return sb.toString()
+    }
+
+    private fun appLabel(ctx: Context, pkg: String): String = runCatching {
+        val pm = ctx.packageManager
+        pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+    }.getOrDefault(pkg)
+
+    private fun fmtDuration(ms: Long): String {
+        val s = ms / 1000; val h = s / 3600; val m = (s % 3600) / 60
+        return when {
+            h > 0 -> "${h}h ${m}m"
+            m > 0 -> "${m}m"
+            else -> "${s}s"
+        }
+    }
+
+    private fun mediaSearch(ctx: Context, args: JsonObject): String {
+        val type = args["type"]?.jsonPrimitive?.contentOrNull ?: "image"
+        val limit = (args["limit"]?.jsonPrimitive?.intOrNull ?: 30).coerceIn(1, 200)
+        val bucket = args["bucket"]?.jsonPrimitive?.contentOrNull?.takeUnless { it.isBlank() }
+        val since = parseDateMs(args["since"]?.jsonPrimitive?.contentOrNull)
+        val until = parseDateMs(args["until"]?.jsonPrimitive?.contentOrNull)
+
+        // On 33+ the specific type's permission must be granted (the gate accepts ANY media perm).
+        if (Build.VERSION.SDK_INT >= 33) {
+            val perm = when (type) {
+                "image" -> "android.permission.READ_MEDIA_IMAGES"
+                "video" -> "android.permission.READ_MEDIA_VIDEO"
+                "audio" -> "android.permission.READ_MEDIA_AUDIO"
+                else -> throw ToolArgError("type must be one of image, video, audio")
+            }
+            if (androidx.core.content.ContextCompat.checkSelfPermission(ctx, perm) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                throw ToolExecError("the '$type' library permission isn't granted — grant $type access to androidmcp, then retry")
+            }
+        }
+
+        val uri = when (type) {
+            "image" -> android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+            "video" -> android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+            "audio" -> android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+            else -> throw ToolArgError("type must be one of image, video, audio")
+        }
+        val cols = buildList {
+            add(android.provider.MediaStore.MediaColumns._ID)
+            add(android.provider.MediaStore.MediaColumns.DISPLAY_NAME)
+            add(android.provider.MediaStore.MediaColumns.DATE_ADDED) // epoch SECONDS
+            add(android.provider.MediaStore.MediaColumns.SIZE)
+            add(android.provider.MediaStore.MediaColumns.MIME_TYPE)
+            add(android.provider.MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)
+            if (type != "audio") { add(android.provider.MediaStore.MediaColumns.WIDTH); add(android.provider.MediaStore.MediaColumns.HEIGHT) }
+            if (type != "image") add(android.provider.MediaStore.MediaColumns.DURATION)
+        }.toTypedArray()
+
+        val where = StringBuilder(); val a = ArrayList<String>()
+        since?.let { where.append(if (where.isEmpty()) "" else " AND ").append("${android.provider.MediaStore.MediaColumns.DATE_ADDED} >= ?"); a.add((it / 1000).toString()) }
+        until?.let { where.append(if (where.isEmpty()) "" else " AND ").append("${android.provider.MediaStore.MediaColumns.DATE_ADDED} <= ?"); a.add((it / 1000).toString()) }
+        bucket?.let { where.append(if (where.isEmpty()) "" else " AND ").append("${android.provider.MediaStore.MediaColumns.BUCKET_DISPLAY_NAME} LIKE ?"); a.add("%$it%") }
+
+        val sb = StringBuilder(); var n = 0
+        val cur = ctx.contentResolver.query(
+            uri, cols, where.toString().ifBlank { null }, if (a.isEmpty()) null else a.toTypedArray(),
+            "${android.provider.MediaStore.MediaColumns.DATE_ADDED} DESC",
+        ) ?: throw ToolExecError("media provider not accessible")
+        cur.use { c ->
+            val iName = c.getColumnIndex(android.provider.MediaStore.MediaColumns.DISPLAY_NAME)
+            val iDate = c.getColumnIndex(android.provider.MediaStore.MediaColumns.DATE_ADDED)
+            val iSize = c.getColumnIndex(android.provider.MediaStore.MediaColumns.SIZE)
+            val iMime = c.getColumnIndex(android.provider.MediaStore.MediaColumns.MIME_TYPE)
+            val iBucket = c.getColumnIndex(android.provider.MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)
+            val iW = c.getColumnIndex(android.provider.MediaStore.MediaColumns.WIDTH)
+            val iH = c.getColumnIndex(android.provider.MediaStore.MediaColumns.HEIGHT)
+            val iDur = c.getColumnIndex(android.provider.MediaStore.MediaColumns.DURATION)
+            val fmt = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+            while (c.moveToNext() && n < limit) {
+                val date = if (iDate >= 0) fmt.format(java.util.Date(c.getLong(iDate) * 1000)) else "?"
+                val size = if (iSize >= 0) c.getLong(iSize) else 0
+                val name = if (iName >= 0) c.getString(iName) else "?"
+                sb.append("• $name  [$date")
+                if (iBucket >= 0) c.getString(iBucket)?.let { sb.append(", $it") }
+                if (type != "audio" && iW >= 0 && iH >= 0) sb.append(", ${c.getInt(iW)}x${c.getInt(iH)}")
+                if (type != "image" && iDur >= 0) sb.append(", ${c.getLong(iDur) / 1000}s")
+                if (iMime >= 0) c.getString(iMime)?.let { sb.append(", $it") }
+                sb.append(", ${size / 1024}KB]\n")
+                n++
+            }
+        }
+        return if (n == 0) "0 $type items matched." else "$n $type item(s), newest first:\n$sb".trimEnd()
+    }
+
+    private fun parseDateMs(s: String?): Long? {
+        if (s.isNullOrBlank()) return null
+        s.toLongOrNull()?.let { return it } // already epoch milliseconds
+        return runCatching {
+            java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).apply { isLenient = false }.parse(s)?.time
+        }.getOrNull() ?: throw ToolArgError("date '$s' must be YYYY-MM-DD or epoch milliseconds")
+    }
+
+    private suspend fun recordScreen(ctx: Context, args: JsonObject): List<JsonObject> {
+        if (ProjectionHolder.projection == null) {
+            throw ToolExecError("Screen sharing isn't active. Open androidmcp and tap 'Start screen sharing' (Android requires a one-time on-device consent), then retry.")
+        }
+        val dur = (args["duration_sec"]?.jsonPrimitive?.intOrNull ?: 5).coerceIn(1, 30)
+        val mp4 = ScreenRecorder.record(ctx, dur)
+            ?: throw ToolExecError("Screen recording failed — the projection may have been revoked. Re-start screen sharing in androidmcp.")
+        return listOf(textBlk("Recorded ${dur}s of screen (${mp4.size / 1024}KB).")) +
+            mediaBlocks(mp4, "video/mp4", "screen.mp4", isImage = false)
+    }
+
+    private fun writeContact(ctx: Context, args: JsonObject): String {
+        val name = args["name"]?.jsonPrimitive?.contentOrNull?.takeUnless { it.isBlank() }
+            ?: throw ToolArgError("provide 'name' for the contact")
+        val phone = args["phone"]?.jsonPrimitive?.contentOrNull?.takeUnless { it.isBlank() }
+        val email = args["email"]?.jsonPrimitive?.contentOrNull?.takeUnless { it.isBlank() }
+
+        val ops = ArrayList<android.content.ContentProviderOperation>()
+        ops.add(
+            android.content.ContentProviderOperation.newInsert(ContactsContract.RawContacts.CONTENT_URI)
+                .withValue(ContactsContract.RawContacts.ACCOUNT_TYPE, null)
+                .withValue(ContactsContract.RawContacts.ACCOUNT_NAME, null).build(),
+        )
+        ops.add(
+            android.content.ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, 0)
+                .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE)
+                .withValue(ContactsContract.CommonDataKinds.StructuredName.DISPLAY_NAME, name).build(),
+        )
+        phone?.let {
+            ops.add(
+                android.content.ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                    .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, 0)
+                    .withValue(ContactsContract.Data.MIMETYPE, Phone.CONTENT_ITEM_TYPE)
+                    .withValue(Phone.NUMBER, it)
+                    .withValue(Phone.TYPE, Phone.TYPE_MOBILE).build(),
+            )
+        }
+        email?.let {
+            ops.add(
+                android.content.ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                    .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, 0)
+                    .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.Email.CONTENT_ITEM_TYPE)
+                    .withValue(ContactsContract.CommonDataKinds.Email.ADDRESS, it)
+                    .withValue(ContactsContract.CommonDataKinds.Email.TYPE, ContactsContract.CommonDataKinds.Email.TYPE_HOME).build(),
+            )
+        }
+        runCatching { ctx.contentResolver.applyBatch(ContactsContract.AUTHORITY, ops) }
+            .getOrElse { throw ToolExecError("could not write the contact (${it.javaClass.simpleName})") }
+        val added = listOfNotNull(phone?.let { "phone" }, email?.let { "email" })
+        return "Saved contact \"$name\"" +
+            (if (added.isEmpty()) " (name only)." else " with ${added.joinToString(" and ")}.") +
+            " Android may merge it with an existing contact of the same name."
     }
 
     private fun notificationAction(args: JsonObject): String {

@@ -11,7 +11,7 @@ mic and files is a remotely-controllable surveillance surface — so every capab
 on the device *every time*. When something is blocked, the server tells the model exactly what
 to turn on.
 
-> **Status: feature-complete and device-verified.** 52 tools, a default-deny double gate,
+> **Status: feature-complete and device-verified.** 56 tools, a default-deny double gate,
 > per-call approval, hashed bearer tokens with per-token capability scoping, optional
 > self-signed TLS, optional remote approval via MCP elicitation, and a Compose config UI — all
 > built and tested on real hardware (a Samsung phone and a Unisoc tablet) over **LAN** and
@@ -88,7 +88,7 @@ the fix. A blocked call returns a normal result with `isError: true` plus machin
 
 ## Capabilities
 
-All default-OFF except `list_capabilities`. The 47 below need **no root**; five optional
+All default-OFF except `list_capabilities`. The 51 below need **no root**; five optional
 **elevated** tools (Shizuku *or* root) are covered under [Root vs non-root](#root-vs-non-root).
 All device-verified. Tools whose hardware is absent (e.g. `dial` on a Wi-Fi-only tablet) are
 auto-marked unavailable and refuse with `HARDWARE_UNAVAILABLE`.
@@ -105,9 +105,11 @@ auto-marked unavailable and refuse with `HARDWARE_UNAVAILABLE`.
 | `notification_action` | Reply to / tap an action button on a notification | Notification Listener access | ✓ |
 | `list_files` | Browse + read within granted folders (list, or read by URI) | SAF grant (read-only) | ✓ |
 | `write_file` | Create / overwrite a file in a granted **writable** folder | SAF read+write grant | ✓ |
+| `media_search` | Search the media library by type / date / album (metadata only) | `READ_MEDIA_*` (image/video/audio) | ✓ |
 | `take_photo` | Headless still, front/rear (Camera2) | `CAMERA` | ✓ |
 | `record_audio` | Short mic clip (MediaRecorder) | `RECORD_AUDIO` | ✓ |
 | `capture_screenshot` | Screen frame (MediaProjection) | screen-share consent | ✓ |
+| `record_screen` | Short screen recording to MP4 (MediaProjection) | screen-share consent | ✓ |
 | `read_screen` | Structured on-screen content (accessibility node tree, no root) | Accessibility access | ✓ |
 | `global_action` | Navigate: back / home / recents / notifications / quick-settings / lock / screenshot | Accessibility access | ✓ |
 | `tap` | Tap a screen coordinate (no root) | Accessibility access | ✓ |
@@ -130,9 +132,11 @@ auto-marked unavailable and refuse with `HARDWARE_UNAVAILABLE`.
 | `torch` | Toggle the camera flash LED | none | |
 | `vibrate` | Buzz for N ms | `VIBRATE` (install-time) | |
 | `list_packages` | Installed apps (label + package) | `QUERY_ALL_PACKAGES` | |
+| `foreground_app` | Current foreground app + optional recent usage (no root) | Usage access (special) | ✓ |
 | `launch_url` | Open a URL (ACTION_VIEW) | none | ✓ |
 | `dial` | Pre-fill the dialer (does not call) | none | ✓ |
 | `get_contacts` | Look up contacts (name + numbers) | `READ_CONTACTS` | ✓ |
+| `write_contact` | Add / update a contact (name, phone, email) | `WRITE_CONTACTS` | ✓ |
 | `read_calendar` | Upcoming calendar events | `READ_CALENDAR` | ✓ |
 | `create_calendar_event` | Insert a calendar event | `READ_CALENDAR` + `WRITE_CALENDAR` | ✓ |
 | `set_volume` | Set a stream's volume | `MODIFY_AUDIO_SETTINGS` (install-time) | ✓ |

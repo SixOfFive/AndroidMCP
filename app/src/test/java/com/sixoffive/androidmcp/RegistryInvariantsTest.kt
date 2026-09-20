@@ -96,6 +96,7 @@ class RegistryInvariantsTest {
             "root_screenshot", "root_shell", "elevated_input", "elevated_settings",
             "notification_action", "write_file", "read_screen", "global_action",
             "tap", "swipe", "type_text",
+            "foreground_app", "media_search", "record_screen", "write_contact",
         )
         mustBeHighImpact.forEach { id ->
             val cap = Capabilities.byId(id) ?: return@forEach // tolerate renames; other tests catch those

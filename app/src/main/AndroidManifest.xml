@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -26,6 +27,20 @@
     <uses-permission android:name="android.permission.WRITE_CALENDAR" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- write_contact (Wave 5): add/update a contact. Read side uses READ_CONTACTS above. -->
+    <uses-permission android:name="android.permission.WRITE_CONTACTS" />
+    <!-- media_search (Wave 5): read media-library metadata. API 33+ splits by type; on API <= 32
+         the OS maps these to the legacy READ_EXTERNAL_STORAGE, declared with maxSdkVersion so it is
+         not requested on modern devices. The gate accepts any one type being granted. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <!-- foreground_app (Wave 5): a non-root current-app / usage read. This is a special-access
+         (appop) permission granted in Settings -> Usage access, not a runtime grant, so it is NOT
+         listed in any CapabilityMeta.permissions; the gate checks the appop instead. -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
 
     <application
         android:name=".App"

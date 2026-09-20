@@ -482,6 +482,11 @@ private fun ServerScreen() {
                             ctx.startActivity(android.content.Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
                         }
                     }) { Text("Notification access (Read notifications)") }
+                    OutlinedButton(onClick = {
+                        runCatching {
+                            ctx.startActivity(android.content.Intent(android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS))
+                        }
+                    }) { Text("Usage access (Foreground app & usage)") }
                     run {
                         permRefresh // re-check after a grant
                         if (android.os.Build.VERSION.SDK_INT >= 33 &&

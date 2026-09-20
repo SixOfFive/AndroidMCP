@@ -342,6 +342,48 @@ internal object ToolSchemas {
             destructive = true, openWorld = true,
         ),
 
+        // ---- Wave 5 ----
+        "foreground_app" to Spec(
+            "Report the app currently in the foreground, and optionally recent app-usage time — a " +
+                "non-root alternative to elevated_current_app. Needs Usage access, granted once in " +
+                "Android Settings.",
+            listOf(
+                str("usage_window", "Also summarise app-usage time over this window (top apps by time). " +
+                    "Omit or 'none' for just the current foreground app.",
+                    enum = listOf("none", "day", "week"), default = "none"),
+                int("limit", "When a usage window is given, how many top apps to list.", 1, 50, 10),
+            ),
+            readOnly = true,
+        ),
+        "media_search" to Spec(
+            "Search the device's media library for metadata (not the file bytes). Filter by type, " +
+                "date added, and album/folder name. Needs the matching media read permission.",
+            listOf(
+                str("type", "Which library to search.", enum = listOf("image", "video", "audio"), default = "image"),
+                int("limit", "Maximum items to return, newest first.", 1, 200, 30),
+                str("bucket", "Case-insensitive substring matched against the album/folder name. Omit to search all."),
+                str("since", "Only items added on/after this date — ISO date (YYYY-MM-DD) or Unix epoch MILLISECONDS. Omit for no lower bound."),
+                str("until", "Only items added on/before this date — ISO date (YYYY-MM-DD) or Unix epoch MILLISECONDS. Omit for no upper bound."),
+            ),
+            readOnly = true,
+        ),
+        "record_screen" to Spec(
+            "Record the screen to a short MP4 and return it as a link. Requires screen sharing to be " +
+                "started in the app first (the same one-time consent as capture_screenshot). Video only, no audio.",
+            listOf(int("duration_sec", "How many seconds to record.", 1, 30, 5)),
+            readOnly = true,
+        ),
+        "write_contact" to Spec(
+            "Create a new contact, or add a phone/email to an existing one matched by display name. " +
+                "Provide a name; phone and/or email are optional but supply at least one to be useful.",
+            listOf(
+                str("name", "The contact's display name.", required = true),
+                str("phone", "Phone number to add. Optional."),
+                str("email", "Email address to add. Optional."),
+            ),
+            destructive = true,
+        ),
+
         // ---- elevated ----
         "elevated_input" to Spec(
             "Inject input system-wide into ANY app — something a normal Android app cannot do. Needs " +

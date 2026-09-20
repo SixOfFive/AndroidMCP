@@ -511,6 +511,52 @@ object Capabilities {
             risk = "High — writes into an editable field you point it at, in any app",
             defaultOn = false, phase = Phase.V1_1, highImpact = true, rootRequired = false,
         ),
+        // ---- Wave 5 ----
+        CapabilityMeta(
+            id = "foreground_app", title = "Foreground app & usage",
+            why = listOf(
+                "Report the app currently in the foreground, and optionally recent app-usage time — no root",
+                "Let a client know what the user is doing to give context-aware help",
+            ),
+            permissions = emptyList(), // Usage-access special access (appop), handled by the gate
+            dataExposed = "Which app is on screen now and, for a window, which apps were used and for how long — no screen contents",
+            risk = "Medium — reveals app usage, which hints at activity and habits",
+            defaultOn = false, phase = Phase.V1_1, highImpact = true, rootRequired = false,
+        ),
+        CapabilityMeta(
+            id = "media_search", title = "Search media library",
+            why = listOf(
+                "Find photos, videos or audio by date, album/folder or name — metadata only",
+                "Let a client locate media without granting a whole folder",
+            ),
+            permissions = listOf(
+                "android.permission.READ_MEDIA_IMAGES",
+                "android.permission.READ_MEDIA_VIDEO",
+                "android.permission.READ_MEDIA_AUDIO",
+            ),
+            dataExposed = "Media metadata — file name, date, size, type, dimensions/duration, album/folder (not the file bytes)",
+            risk = "Medium — reveals what media you have and when it was captured",
+            defaultOn = false, phase = Phase.V1_1, highImpact = true, rootRequired = false,
+        ),
+        CapabilityMeta(
+            id = "record_screen", title = "Record screen",
+            why = listOf("Record the screen to a short video (needs the same one-time screen-share consent as capture_screenshot)"),
+            permissions = emptyList(), // MediaProjection consent, handled in the handler
+            dataExposed = "A video of whatever is on your screen for the recording window",
+            risk = "High — captures everything shown on screen over time",
+            defaultOn = false, phase = Phase.V1_1, highImpact = true, rootRequired = false,
+        ),
+        CapabilityMeta(
+            id = "write_contact", title = "Add / update contact",
+            why = listOf(
+                "Create a new contact, or add a phone/email to an existing one",
+                "Let a client save contact details on request",
+            ),
+            permissions = listOf("android.permission.WRITE_CONTACTS"),
+            dataExposed = "Nothing is read; writes a contact (name, phone, email) into your address book",
+            risk = "High — modifies your contacts",
+            defaultOn = false, phase = Phase.V1_1, highImpact = true, rootRequired = false,
+        ),
         CapabilityMeta(
             id = "elevated_current_app", title = "Foreground app (Shizuku/root)",
             why = listOf(
@@ -601,11 +647,12 @@ object Capabilities {
         "list_capabilities", "device_info" -> "core"
         "battery_status", "read_sensors" -> "sensors"
         "get_location", "wifi_info", "network_info", "telephony_info", "bluetooth_info" -> "location"
-        "storage_info", "thermal_status", "screen_info", "volume_info", "locale_info", "dnd_status" -> "state"
+        "storage_info", "thermal_status", "screen_info", "volume_info", "locale_info", "dnd_status",
+        "foreground_app" -> "state"
         "read_notifications", "notification_action", "post_notification", "read_sms", "read_call_log" -> "messaging"
-        "get_contacts", "read_calendar", "create_calendar_event" -> "personal"
-        "list_files", "write_file" -> "files"
-        "take_photo", "record_audio", "capture_screenshot" -> "media"
+        "get_contacts", "read_calendar", "create_calendar_event", "write_contact" -> "personal"
+        "list_files", "write_file", "media_search" -> "files"
+        "take_photo", "record_audio", "capture_screenshot", "record_screen" -> "media"
         "read_clipboard", "write_clipboard" -> "clipboard"
         "run_shortcut", "list_packages", "launch_url", "dial", "torch", "vibrate",
         "set_volume", "media_control", "toast", "share_text", "open_settings", "speak" -> "actions"
