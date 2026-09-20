@@ -68,6 +68,14 @@ flipping a toggle off, or revoking an OS permission, fails the very next call.
 > therefore raise an **Allow / Deny notification** a human must approve (25 s timeout → deny),
 > or an "armed for N minutes" window.
 
+> **Remote approval (optional, off by default).** Turning on **Remote approval (elicitation)**
+> lets you answer that Allow / Deny in your MCP client (via MCP
+> [elicitation](https://modelcontextprotocol.io/specification/2025-06-18/client/elicitation))
+> instead of reaching for the phone — the on-device prompt still appears, and whichever you
+> answer first wins. The trade-off is deliberate: it means a *connected client* can approve its
+> own calls, so the phone stops being the only thing that can. Leave it off unless you trust the
+> client, and only clients that advertise the elicitation capability are ever asked.
+
 Tools are **always listed** (never hidden), so a model can discover a capability and explain
 the fix. A blocked call returns a normal result with `isError: true` plus machine-readable
 `structuredContent` naming the exact toggle, permission and remediation — with a stable

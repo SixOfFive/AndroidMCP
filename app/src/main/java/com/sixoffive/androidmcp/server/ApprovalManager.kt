@@ -48,6 +48,15 @@ object ApprovalManager {
     /** Type-tagged so numeric `7` and string `"7"` are different requests, as JSON-RPC intends. */
     fun rpcKey(client: String, rpcId: String, numeric: Boolean): String =
         "$client\u0000${if (numeric) "n" else "s"}:$rpcId"
+    /**
+     * elicitation request id -> the client it was sent to.
+     *
+     * The server puts a high-impact approval to the client as an `elicitation/create` request whose
+     * JSON-RPC id IS the internal approval id. When the client answers (a JSON-RPC response on its
+     * own POST), [resolveElicit] matches it here — scoped to the client, so one token's answer can
+     * never resolve another token's pending approval.
+     */
+    private val elicitTargets = ConcurrentHashMap<String, String>()
     private val armedUntil = ConcurrentHashMap<String, Long>()
     private val counter = AtomicInteger(1000)
 
@@ -55,8 +64,22 @@ object ApprovalManager {
     fun arm(capId: String, minutes: Int) { armedUntil[capId] = System.currentTimeMillis() + minutes * 60_000L }
     fun disarm(capId: String) { armedUntil.remove(capId) }
 
-    /** True if the call may proceed. Blocks on the human for high-impact, un-armed tools. */
-    suspend fun require(ctx: Context, cap: CapabilityMeta, client: String, rpcKey: String? = null): Boolean {
+    /**
+     * True if the call may proceed. Blocks on the human for high-impact, un-armed tools.
+     *
+     * [elicit], when supplied, is invoked with the internal approval id right after the on-device
+     * prompt is posted; it puts the same approval to the MCP client (an `elicitation/create` on the
+     * call's own SSE stream). Both channels then feed the SAME deferred, so whichever the human
+     * answers first — the phone or the client — wins, and the 25 s window covers both. Elicitation
+     * only supplements the on-device prompt; it never replaces it.
+     */
+    suspend fun require(
+        ctx: Context,
+        cap: CapabilityMeta,
+        client: String,
+        rpcKey: String? = null,
+        elicit: (suspend (elicitId: String, cap: CapabilityMeta) -> Unit)? = null,
+    ): Boolean {
         if (!cap.highImpact) return true
         if (isArmed(cap.id)) return true
         val id = "req-${counter.incrementAndGet()}"
@@ -66,6 +89,13 @@ object ApprovalManager {
         // mapping of an approval that is still pending.
         rpcKey?.let { byRpcId.putIfAbsent(it, id) }
         postPrompt(ctx, id, cap, client)
+        if (elicit != null) {
+            elicitTargets[id] = client
+            // A failed emit (client already gone) must not sink the call: the on-device prompt is
+            // still up and the timeout still applies, so log and fall back to the phone.
+            runCatching { elicit(id, cap) }
+                .onFailure { Log.w("androidmcp", "elicitation emit failed for $id: ${it.message}") }
+        }
         return try {
             withTimeoutOrNull(TIMEOUT_MS) { deferred.await() } ?: false
         } finally {
@@ -75,8 +105,21 @@ object ApprovalManager {
             pending.remove(id)
             // Two-argument remove: only drop the mapping if it is still OURS.
             rpcKey?.let { byRpcId.remove(it, id) }
+            elicitTargets.remove(id)
             nm(ctx).cancel(notifId(id))
         }
+    }
+
+    /**
+     * A client answered an `elicitation/create` we sent. Resolve the matching approval iff the id is
+     * outstanding AND was sent to this same client. Returns false for an unknown or foreign id, so
+     * the caller can ignore it (a stray/duplicate response must never resolve someone's approval).
+     */
+    fun resolveElicit(client: String, elicitId: String, allow: Boolean): Boolean {
+        if (elicitTargets[elicitId] != client) return false
+        elicitTargets.remove(elicitId)
+        pending.remove(elicitId)?.complete(allow)
+        return true
     }
 
     /**

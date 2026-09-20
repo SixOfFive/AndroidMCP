@@ -382,6 +382,21 @@ private fun ServerScreen() {
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
+                            Text("Remote approval (elicitation)", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                "OFF by default. When ON, a high-impact tool's Allow/Deny can also be answered in " +
+                                    "your MCP client (MCP elicitation), so you can approve without reaching for the " +
+                                    "phone — the on-device prompt still appears, and either one approves. Trade-off: " +
+                                    "it lets a connected client approve its own calls, so the phone stops being the " +
+                                    "only thing that can — enable it only for clients you trust.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(checked = config.remoteApproval, onCheckedChange = { ConfigStore.setRemoteApproval(it) })
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
                             Text("HTTPS (self-signed TLS)", style = MaterialTheme.typography.bodyMedium)
                             Text(
                                 "Serve over HTTPS with a self-signed certificate. Clients must trust it (or skip verification). Redundant on Tailscale, which is already encrypted. Restart the server to apply.",

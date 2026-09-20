@@ -29,8 +29,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -64,6 +67,17 @@ object Mcp {
     const val ASSUMED_WHEN_HEADER_ABSENT = "2025-03-26"
 
     private val json = Json { ignoreUnknownKeys = true }
+
+    /**
+     * Which client tokens declared the `elicitation` capability at `initialize`.
+     *
+     * The spec forbids sending `elicitation/create` to a client that did not advertise it, and the
+     * server is otherwise per-request stateless, so we remember it here keyed by client (bearer)
+     * name. Re-`initialize` overwrites it, so a client that drops the capability stops receiving it.
+     */
+    private val clientElicits = ConcurrentHashMap<String, Boolean>()
+
+    fun clientSupportsElicitation(client: String): Boolean = clientElicits[client] == true
 
     /**
      * Outcome of one JSON-RPC message.
@@ -151,6 +165,14 @@ object Mcp {
         if (id !is JsonPrimitive || (!id.isString && id.longOrNull == null && id.doubleOrNull == null)) {
             return Reply.Rejected(400, errorNoId(-32600, "Invalid Request: id must be a string or a number"))
         }
+        // A message carrying an id but NO method is a RESPONSE to a request the SERVER made — the
+        // only ones we make are `elicitation/create`. Route it to the pending approval and answer
+        // 202 (a response is never itself answered). An id we don't recognise is silently ignored,
+        // as JSON-RPC requires for a stray response.
+        if (method == null && (root.containsKey("result") || root.containsKey("error"))) {
+            routeServerResponse(client, id, root)
+            return Reply.None
+        }
         if (method == null) return Reply.Body(error(id, -32600, "Invalid Request: missing method"))
 
         // Reject an unsupported MCP-Protocol-Version header — but NEVER on `initialize`, which is
@@ -165,7 +187,7 @@ object Mcp {
 
         return runCatching {
             when (method) {
-                "initialize" -> Reply.Body(result(id, initialize(root)))
+                "initialize" -> Reply.Body(result(id, initialize(root, client)))
                 "ping" -> Reply.Body(result(id, buildJsonObject {}))
                 "tools/list" -> Reply.Body(result(id, buildJsonObject {
                     putJsonArray("tools") { Capabilities.REGISTRY.forEach { add(toolDef(ctx, it)) } }
@@ -191,10 +213,13 @@ object Mcp {
      * it supports it, and to answer with a version it *does* support otherwise — the old code
      * hardcoded its own version either way, which silently mismatches an older client.
      */
-    private fun initialize(root: JsonObject): JsonObject {
+    private fun initialize(root: JsonObject, client: String): JsonObject {
         val params = root["params"] as? JsonObject
         val asked = ((params?.get("protocolVersion")) as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
         val agreed = if (asked != null && asked in SUPPORTED) asked else PROTOCOL
+        // Remember whether this client can be asked for approval via elicitation. Its presence as an
+        // object (even empty) is the declaration; absence means we must never send elicitation/create.
+        clientElicits[client] = (params?.get("capabilities") as? JsonObject)?.get("elicitation") is JsonObject
         return buildJsonObject {
             put("protocolVersion", agreed)
             // `tools` and `resources`. No `listChanged` on either: there is no SSE stream to push
@@ -214,6 +239,73 @@ object Mcp {
             put("instructions", INSTRUCTIONS)
         }
     }
+
+    /**
+     * The client answered a server-initiated request (only ever `elicitation/create`). Resolve the
+     * matching pending approval. Everything here is pure map/JSON work — no [Context] — so the
+     * routing is exercisable from a plain test.
+     */
+    private fun routeServerResponse(client: String, id: JsonElement, root: JsonObject) {
+        // Our elicitation ids are always strings ("req-N"); a numeric id is not one of ours.
+        val elicitId = (id as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull ?: return
+        val decision = parseElicitDecision(root) ?: run {
+            // An `error` response, or one with no usable action: leave the on-device prompt and the
+            // timeout to decide rather than denying a call the human might still approve on the phone.
+            AuditLog.record("elicitation", client, false, "no decision in response for $elicitId")
+            return
+        }
+        if (ApprovalManager.resolveElicit(client, elicitId, decision)) {
+            AuditLog.record(
+                "approval", client, decision,
+                "via elicitation: request $elicitId ${if (decision) "ALLOWED" else "DENIED"}",
+            )
+        }
+    }
+
+    /**
+     * Read the human's answer out of an `elicitation/create` response.
+     *
+     * Returns null when the response carries nothing to act on (a JSON-RPC `error`, or no `action`),
+     * so the caller can leave the approval to the other channel. `accept` with `approve:true` is the
+     * only allow; `decline`, `cancel`, and `accept` with `approve:false` all deny.
+     */
+    internal fun parseElicitDecision(root: JsonObject): Boolean? {
+        val result = root["result"] as? JsonObject ?: return null
+        return when ((result["action"] as? JsonPrimitive)?.contentOrNull) {
+            "accept" -> (result["content"] as? JsonObject)?.get("approve")
+                ?.let { (it as? JsonPrimitive)?.booleanOrNull } ?: false
+            "decline", "cancel" -> false
+            else -> false
+        }
+    }
+
+    /**
+     * The `elicitation/create` request put to the client for a high-impact approval. Its JSON-RPC id
+     * IS the internal approval id, so the client's response correlates with no extra bookkeeping. The
+     * schema is a single boolean the host renders as Allow/Deny.
+     */
+    internal fun elicitationRequest(elicitId: String, cap: CapabilityMeta, client: String): String =
+        buildJsonObject {
+            put("jsonrpc", "2.0")
+            put("id", elicitId)
+            put("method", "elicitation/create")
+            putJsonObject("params") {
+                put("message",
+                    "Client '$client' requests \"${cap.title}\". Exposes: ${cap.dataExposed}. " +
+                        "Allow this action to run on the device?")
+                putJsonObject("requestedSchema") {
+                    put("type", "object")
+                    putJsonObject("properties") {
+                        putJsonObject("approve") {
+                            put("type", "boolean")
+                            put("title", "Allow ${cap.title}")
+                            put("description", "true to allow this action to run, false to deny it")
+                        }
+                    }
+                    putJsonArray("required") { add("approve") }
+                }
+            }
+        }.toString()
 
     private val INSTRUCTIONS = """
         This server exposes an Android device's own capabilities as tools. Everything is DEFAULT-DENY:
@@ -299,12 +391,26 @@ object Mcp {
         val rpcKey = (id as? JsonPrimitive)?.contentOrNull
             ?.let { ApprovalManager.rpcKey(client, it, !id.isString) }
 
-        return Reply.Streamed { emit ->
+        return Reply.Streamed { rawEmit ->
+            // One SSE writer, two producers: the progress heartbeat and (below) the elicitation
+            // request both write to this stream. Serialise them — interleaved writes to the same
+            // Writer would corrupt the frame that carries either message.
+            val writeLock = Mutex()
+            val emit: suspend (String) -> Unit = { s -> writeLock.withLock { rawEmit(s) } }
+
+            // Remote approval: opt-in AND the client must have advertised elicitation. When both
+            // hold, the approval is also put to the client on this same stream; otherwise elicit is
+            // null and the on-device prompt is the only channel, exactly as before.
+            val elicit: (suspend (String, CapabilityMeta) -> Unit)? =
+                if (ConfigStore.current.remoteApproval && clientSupportsElicitation(client)) {
+                    { elicitId, cap -> emit(elicitationRequest(elicitId, cap, client)) }
+                } else null
+
             streamWithProgress(
                 token = token,
                 emit = emit,
                 approvalPending = { rpcKey != null && ApprovalManager.isPendingFor(rpcKey) },
-            ) { toolsCall(ctx, id, root, client) }
+            ) { toolsCall(ctx, id, root, client, elicit) }
         }
     }
 
@@ -370,7 +476,14 @@ object Mcp {
             }
         }.toString()
 
-    private suspend fun toolsCall(ctx: Context, id: JsonElement, root: JsonObject, client: String): String {
+    private suspend fun toolsCall(
+        ctx: Context,
+        id: JsonElement,
+        root: JsonObject,
+        client: String,
+        /** Non-null only on a streaming call with remote approval enabled — see [toolsCallReply]. */
+        elicit: (suspend (elicitId: String, cap: CapabilityMeta) -> Unit)? = null,
+    ): String {
         val params = root["params"] as? JsonObject
             ?: return error(id, -32602, "Invalid params: 'params' must be an object")
         val name = (params["name"] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
@@ -413,7 +526,7 @@ object Mcp {
                 // Pass the (client, id) key so notifications/cancelled can withdraw this approval.
                 val rpcKey = (id as? JsonPrimitive)?.contentOrNull
                     ?.let { ApprovalManager.rpcKey(client, it, !(id as JsonPrimitive).isString) }
-                if (!ApprovalManager.require(ctx, cap, client, rpcKey)) {
+                if (!ApprovalManager.require(ctx, cap, client, rpcKey, elicit)) {
                     AuditLog.record(cap.id, client, false, "REQUIRES_USER_APPROVAL")
                     return result(id, approvalRefusal(cap))
                 }

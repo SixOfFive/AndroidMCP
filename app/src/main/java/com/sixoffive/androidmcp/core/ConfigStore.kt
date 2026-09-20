@@ -28,6 +28,10 @@ data class AppConfig(
     val writableFolders: Set<String> = emptySet(), // persisted SAF tree URIs (read+write, for write_file)
     val allowBrowser: Boolean = false, // when true, accept browser Origins + emit CORS (token still required)
     val mediaAsLinks: Boolean = false, // return media as resource_link (fetchable URL) instead of inline base64
+    // When true, high-impact approvals may ALSO be answered through the MCP client (elicitation),
+    // not only the on-device prompt. Opt-in and default OFF: it trades the "even a hostile client
+    // cannot approve its own call" guarantee for the convenience of approving without the phone.
+    val remoteApproval: Boolean = false,
     val tls: Boolean = false, // serve HTTPS with a self-signed cert instead of plain HTTP
     val startOnBoot: Boolean = false, // UI intent: user wants auto-start on boot/launch (armed only by Save)
     val bootArmed: Boolean = false, // committed by "Save": the boot receiver + launch-resume act ONLY on this
@@ -50,6 +54,7 @@ object ConfigStore {
     private val KEY_WRITABLE = stringSetPreferencesKey("writable_folders")
     private val KEY_BROWSER = booleanPreferencesKey("allow_browser")
     private val KEY_MEDIA_LINKS = booleanPreferencesKey("media_as_links")
+    private val KEY_REMOTE_APPROVAL = booleanPreferencesKey("remote_approval")
     private val KEY_TLS = booleanPreferencesKey("tls")
     private val KEY_START_ON_BOOT = booleanPreferencesKey("start_on_boot")
     private val KEY_BOOT_ARMED = booleanPreferencesKey("boot_armed")
@@ -68,6 +73,7 @@ object ConfigStore {
             writableFolders = p[KEY_WRITABLE] ?: emptySet(),
             allowBrowser = p[KEY_BROWSER] ?: false,
             mediaAsLinks = p[KEY_MEDIA_LINKS] ?: false,
+            remoteApproval = p[KEY_REMOTE_APPROVAL] ?: false,
             tls = p[KEY_TLS] ?: false,
             startOnBoot = p[KEY_START_ON_BOOT] ?: false,
             bootArmed = p[KEY_BOOT_ARMED] ?: false,
@@ -111,6 +117,7 @@ object ConfigStore {
     fun setPort(port: Int) = scope.launch { app.configDataStore.edit { it[KEY_PORT] = port } }
     fun setAllowBrowser(on: Boolean) = scope.launch { app.configDataStore.edit { it[KEY_BROWSER] = on } }
     fun setMediaAsLinks(on: Boolean) = scope.launch { app.configDataStore.edit { it[KEY_MEDIA_LINKS] = on } }
+    fun setRemoteApproval(on: Boolean) = scope.launch { app.configDataStore.edit { it[KEY_REMOTE_APPROVAL] = on } }
     fun setTls(on: Boolean) = scope.launch { app.configDataStore.edit { it[KEY_TLS] = on } }
     fun setStartOnBoot(on: Boolean) = scope.launch { app.configDataStore.edit { it[KEY_START_ON_BOOT] = on } }
 
