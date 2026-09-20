@@ -703,6 +703,8 @@ object Mcp {
         "share_text" -> listOf(textBlk(shareText(ctx, args)))
         "open_settings" -> listOf(textBlk(openSettings(ctx, args)))
         "create_calendar_event" -> listOf(textBlk(createCalendarEvent(ctx, args)))
+        "read_screen" -> listOf(textBlk(readScreen(args)))
+        "global_action" -> listOf(textBlk(globalAction(args)))
         "elevated_current_app" -> listOf(textBlk(elevatedCurrentApp(ctx)))
         "elevated_settings" -> listOf(textBlk(elevatedSettings(ctx, args)))
         "root_screenshot" -> rootScreenshot()
@@ -912,6 +914,17 @@ object Mcp {
         val limit = (args["limit"]?.jsonPrimitive?.intOrNull ?: 20).coerceIn(1, 200)
         return McpNotificationListener.readActive(limit)
             ?: "notification listener isn't connected yet — toggle Notification access off/on for androidmcp, then retry"
+    }
+
+    private fun readScreen(args: JsonObject): String {
+        val max = (args["max_nodes"]?.jsonPrimitive?.intOrNull ?: 200).coerceIn(1, 2000)
+        return McpAccessibilityService.readScreen(max)
+    }
+
+    private fun globalAction(args: JsonObject): String {
+        val action = args["action"]?.jsonPrimitive?.contentOrNull?.trim()?.takeUnless { it.isBlank() }
+            ?: throw ToolArgError("provide an 'action': back, home, recents, notifications, quick_settings, lock_screen, screenshot, or power_dialog")
+        return McpAccessibilityService.globalAction(action)
     }
 
     private fun notificationAction(args: JsonObject): String {

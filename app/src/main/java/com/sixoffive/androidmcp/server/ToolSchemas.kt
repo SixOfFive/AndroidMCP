@@ -293,6 +293,22 @@ internal object ToolSchemas {
             destructive = true,
         ),
 
+        // ---- accessibility (non-root, via the accessibility service) ----
+        "read_screen" to Spec(
+            "Read the current screen as a structured tree of on-screen elements via the accessibility " +
+                "service — text, buttons and fields, each with its class, interaction flags and an " +
+                "on-screen centre [x,y] you can later tap. A non-root alternative to a screenshot that " +
+                "gives structure a picture cannot.",
+            listOf(int("max_nodes", "Maximum elements to return, deepest-first traversal.", 1, 2000, 200)),
+            readOnly = true,
+        ),
+        "global_action" to Spec(
+            "Perform a device-wide navigation or system action via the accessibility service — no root.",
+            listOf(str("action", "Which action to perform.", required = true,
+                enum = listOf("back", "home", "recents", "notifications", "quick_settings",
+                    "lock_screen", "screenshot", "power_dialog"))),
+        ),
+
         // ---- elevated ----
         "elevated_input" to Spec(
             "Inject input system-wide into ANY app — something a normal Android app cannot do. Needs " +

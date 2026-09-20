@@ -457,6 +457,28 @@ object Capabilities {
             defaultOn = false, phase = Phase.V1_1, highImpact = true, rootRequired = false,
         ),
         CapabilityMeta(
+            id = "read_screen", title = "Read screen (accessibility)",
+            why = listOf(
+                "Report on-screen content as a structured tree of elements (text, buttons, fields) with tap coordinates",
+                "Let a client see and reason about the current UI without root or a screenshot",
+            ),
+            permissions = emptyList(), // Accessibility special access, handled by the gate
+            dataExposed = "The text and structure of whatever is on screen — messages, fields, labels",
+            risk = "High — reveals on-screen content, including private messages and what you're typing",
+            defaultOn = false, phase = Phase.V1_1, highImpact = true, rootRequired = false,
+        ),
+        CapabilityMeta(
+            id = "global_action", title = "Navigate (accessibility)",
+            why = listOf(
+                "Perform a device-wide action: back, home, recents, notifications, quick settings, lock, screenshot",
+                "Let a client drive system navigation without root",
+            ),
+            permissions = emptyList(), // Accessibility special access, handled by the gate
+            dataExposed = "Nothing is read; performs a navigation or system action you approve",
+            risk = "High — can navigate, open the shade/quick settings, lock the device, or trigger a screenshot",
+            defaultOn = false, phase = Phase.V1_1, highImpact = true, rootRequired = false,
+        ),
+        CapabilityMeta(
             id = "elevated_current_app", title = "Foreground app (Shizuku/root)",
             why = listOf(
                 "Report the app/activity currently in the foreground via the shell (needs Shizuku or root)",
@@ -538,6 +560,7 @@ object Capabilities {
         Category("media", "Camera · mic · screen"),
         Category("clipboard", "Clipboard"),
         Category("actions", "Actions & apps"),
+        Category("accessibility", "Accessibility (read & control screen)"),
         Category("elevated", "Elevated (Shizuku / root)"),
     )
 
@@ -553,6 +576,7 @@ object Capabilities {
         "read_clipboard", "write_clipboard" -> "clipboard"
         "run_shortcut", "list_packages", "launch_url", "dial", "torch", "vibrate",
         "set_volume", "media_control", "toast", "share_text", "open_settings", "speak" -> "actions"
+        "read_screen", "global_action" -> "accessibility"
         "root_screenshot", "root_shell", "elevated_input", "elevated_current_app", "elevated_settings" -> "elevated"
         else -> "actions"
     }

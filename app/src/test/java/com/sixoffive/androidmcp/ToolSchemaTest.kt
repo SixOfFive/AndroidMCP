@@ -107,7 +107,7 @@ class ToolSchemaTest {
             "toast" to "text", "share_text" to "text", "create_calendar_event" to "title",
             "root_shell" to "command", "run_shortcut" to "package",
             "torch" to "on", "post_notification" to "title", "speak" to "text",
-            "notification_action" to "key",
+            "notification_action" to "key", "global_action" to "action",
         )
         mustRequire.forEach { (tool, arg) ->
             val spec = ToolSchemas.specFor(tool)
@@ -174,6 +174,11 @@ class ToolSchemaTest {
         assertEquals(listOf("back", "front"), ToolSchemas.specFor("take_photo").args.first { it.name == "camera" }.enum)
         assertEquals(listOf("get", "put"), ToolSchemas.specFor("elevated_settings").args.first { it.name == "action" }.enum)
         assertEquals(listOf("tap", "swipe", "text", "key"), ToolSchemas.specFor("elevated_input").args.first { it.name == "action" }.enum)
+        // global_action's enum must match exactly the actions McpAccessibilityService.globalAction() maps.
+        assertEquals(
+            listOf("back", "home", "recents", "notifications", "quick_settings", "lock_screen", "screenshot", "power_dialog"),
+            ToolSchemas.specFor("global_action").args.first { it.name == "action" }.enum,
+        )
     }
 
     @Test

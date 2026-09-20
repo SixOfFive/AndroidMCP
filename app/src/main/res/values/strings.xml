@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">androidmcp</string>
+    <string name="a11y_description">Lets androidmcp read on-screen content and perform navigation, taps and text entry on request, so an MCP client can see and drive the UI without root. Every use is still gated by the app\'s per-call approval.</string>
 </resources>
