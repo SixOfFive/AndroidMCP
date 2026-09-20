@@ -31,13 +31,13 @@ use permissions Play policy forbids). Full build, design and roadmap detail live
 [Releases page](https://github.com/SixOfFive/AndroidMCP/releases/latest) and sideload it:
 
 ```bash
-adb install -r androidmcp-0.5.0.apk
+adb install -r androidmcp-0.6.0.apk
 ```
 
 Optionally verify it carries the project's release signature before installing:
 
 ```bash
-apksigner verify --print-certs androidmcp-0.5.0.apk
+apksigner verify --print-certs androidmcp-0.6.0.apk
 # SHA-256: D6:27:15:B5:E9:DB:AB:C6:7E:71:AC:D2:16:90:17:21:44:95:C8:89:7E:02:86:7B:93:E0:16:B5:83:32:89:EE
 ```
 
