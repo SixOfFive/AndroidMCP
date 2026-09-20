@@ -83,14 +83,14 @@ class TlsKeystoreTest {
         assertNull(before)
         assertNotNull(loopbackOnly)
 
-        val withLan = TlsKeystore.loadOrCreate(dir, listOf("127.0.0.1", "192.168.15.123"))
+        val withLan = TlsKeystore.loadOrCreate(dir, listOf("127.0.0.1", "192.168.1.50"))
         assertTrue(
             TlsKeystore.fingerprintSha256(dir) != loopbackOnly,
             "a new address must force a re-issue",
         )
         val sans = certOf(withLan).subjectAlternativeNames.orEmpty()
             .mapNotNull { it.getOrNull(1) as? String }.toSet()
-        assertTrue("192.168.15.123" in sans)
+        assertTrue("192.168.1.50" in sans)
         assertTrue("127.0.0.1" in sans)
     }
 
@@ -99,9 +99,9 @@ class TlsKeystoreTest {
         // The mirror of the above — re-minting on every start is exactly the bug that made the
         // fingerprint unpinnable, so a superset must be reused.
         val dir = tmp.newFolder()
-        TlsKeystore.loadOrCreate(dir, listOf("127.0.0.1", "192.168.15.123"))
+        TlsKeystore.loadOrCreate(dir, listOf("127.0.0.1", "192.168.1.50"))
         val first = TlsKeystore.fingerprintSha256(dir)
-        TlsKeystore.loadOrCreate(dir, listOf("127.0.0.1", "192.168.15.123"))
+        TlsKeystore.loadOrCreate(dir, listOf("127.0.0.1", "192.168.1.50"))
         assertEquals(first, TlsKeystore.fingerprintSha256(dir))
     }
 

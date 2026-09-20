@@ -49,12 +49,12 @@ class TlsCertTest {
 
     @Test
     fun `every bind address gets an IP SAN`() {
-        // The failure this prevents: `https://192.168.15.123:8765` fails hostname verification with
+        // The failure this prevents: `https://192.168.1.50:8765` fails hostname verification with
         // "IP does not match certificate's altnames" — on exactly the LAN and tailnet binds where
         // TLS is worth enabling, since loopback and Tailscale are already private.
-        val c = cert("127.0.0.1", "192.168.15.123", "100.127.216.3")
+        val c = cert("127.0.0.1", "192.168.1.50", "100.64.0.3")
         val sans = c.subjectAlternativeNames.orEmpty().mapNotNull { it.getOrNull(1) as? String }.toSet()
-        listOf("127.0.0.1", "192.168.15.123", "100.127.216.3").forEach {
+        listOf("127.0.0.1", "192.168.1.50", "100.64.0.3").forEach {
             assertTrue(it in sans, "$it is missing from the cert SANs: $sans")
         }
         assertTrue("localhost" in sans)

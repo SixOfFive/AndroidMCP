@@ -14,7 +14,7 @@ PAGE = os.environ.get(
     "DASH_PAGE",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "dashboard", "index.html"),
 )
-UPSTREAM = os.environ.get("MCP_UPSTREAM", "http://192.168.15.123:8765")
+UPSTREAM = os.environ.get("MCP_UPSTREAM", "http://192.168.1.50:8765")
 PORT = int(os.environ.get("DASH_PORT", "9912"))
 
 

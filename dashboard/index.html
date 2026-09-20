@@ -233,8 +233,8 @@ function loadConns(){
   } else {
     // Seed two connections (base URLs only — never tokens) so two devices work out of the box.
     CONNS = [
-      newConn("tablet", "http://192.168.15.123:8765/mcp", ""),
-      newConn("phone",  "http://192.168.15.158:8765/mcp", ""),
+      newConn("tablet", "http://192.168.1.50:8765/mcp", ""),
+      newConn("phone",  "http://192.168.1.51:8765/mcp", ""),
     ];
   }
   activeId = CONNS[0].id;

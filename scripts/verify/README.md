@@ -6,7 +6,7 @@ the findings were only reachable by driving the running server, and re-deriving 
 All of them read the bearer token from `MCP_TOKEN` — none stores a credential.
 
 ```bash
-export MCP_URL=http://192.168.15.123:8765/mcp
+export MCP_URL=http://192.168.1.50:8765/mcp
 export MCP_TOKEN=<the token the app shows once, on mint>
 ```
 
@@ -32,7 +32,7 @@ snake_case.
 ## `mcp_tap.py` — log what a client actually sends
 
 ```bash
-python3 scripts/verify/mcp_tap.py http://192.168.15.123:8765 tap.log
+python3 scripts/verify/mcp_tap.py http://192.168.1.50:8765 tap.log
 # then point a client at http://127.0.0.1:9911/mcp
 ```
 

@@ -36,7 +36,7 @@ class AccessControlTest {
         // Measured against the live server before this change: `Origin: https://evil.example`
         // passed the guard and failed only at auth, because CORS echoed whatever was sent.
         assertFalse(allowed("https://evil.example"))
-        assertFalse(allowed("http://192.168.15.99:8080"))
+        assertFalse(allowed("http://192.168.1.99:8080"))
         assertFalse(allowed("https://localhost.evil.example"))
     }
 

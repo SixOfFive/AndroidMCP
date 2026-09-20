@@ -10,7 +10,7 @@ import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-UPSTREAM = sys.argv[1] if len(sys.argv) > 1 else "http://192.168.15.123:8765"  # override as argv[1]
+UPSTREAM = sys.argv[1] if len(sys.argv) > 1 else "http://192.168.1.50:8765"  # override as argv[1]
 LOG = open(sys.argv[2] if len(sys.argv) > 2 else "tap.log", "w", buffering=1)
 
 # Headers a client sets that we want to see verbatim; everything else is still logged.
