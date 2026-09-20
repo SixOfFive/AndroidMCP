@@ -679,6 +679,7 @@ object Mcp {
         "read_clipboard" -> listOf(textBlk(clipboardRead(ctx)))
         "write_clipboard" -> listOf(textBlk(clipboardWrite(ctx, args)))
         "read_notifications" -> listOf(textBlk(readNotifications(args)))
+        "notification_action" -> listOf(textBlk(notificationAction(args)))
         "list_files" -> listOf(textBlk(filesRunner(ctx, args)))
         "run_shortcut" -> listOf(textBlk(runShortcut(ctx, args)))
         "wifi_info" -> listOf(textBlk(wifiInfo(ctx)))
@@ -910,6 +911,15 @@ object Mcp {
         val limit = (args["limit"]?.jsonPrimitive?.intOrNull ?: 20).coerceIn(1, 200)
         return McpNotificationListener.readActive(limit)
             ?: "notification listener isn't connected yet — toggle Notification access off/on for androidmcp, then retry"
+    }
+
+    private fun notificationAction(args: JsonObject): String {
+        val key = args["key"]?.jsonPrimitive?.contentOrNull?.takeUnless { it.isBlank() }
+            ?: throw ToolArgError("provide the notification 'key' from read_notifications")
+        val index = args["action_index"]?.jsonPrimitive?.intOrNull
+            ?: throw ToolArgError("provide an integer 'action_index' (the index read_notifications showed for the action)")
+        val text = args["text"]?.jsonPrimitive?.contentOrNull
+        return McpNotificationListener.sendAction(key, index, text)
     }
 
     private fun filesRunner(ctx: Context, args: JsonObject): String {

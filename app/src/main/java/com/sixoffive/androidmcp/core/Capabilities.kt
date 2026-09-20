@@ -78,6 +78,17 @@ object Capabilities {
             defaultOn = false, phase = Phase.MVP, highImpact = true,
         ),
         CapabilityMeta(
+            id = "notification_action", title = "Act on a notification",
+            why = listOf(
+                "Reply to a message notification, or tap one of its action buttons",
+                "Let a client answer a chat or clear an alert without opening the app",
+            ),
+            permissions = emptyList(), // same Notification Listener special access as read_notifications
+            dataExposed = "Nothing is read; sends a reply or fires an action button on a notification you name",
+            risk = "High — can send messages and trigger actions in other apps on your behalf",
+            defaultOn = false, phase = Phase.V1_1, highImpact = true,
+        ),
+        CapabilityMeta(
             id = "list_files", title = "List / read files",
             why = listOf("Browse and read files inside folders you explicitly grant"),
             permissions = emptyList(), // SAF grants, handled by the gate
@@ -524,7 +535,7 @@ object Capabilities {
         "battery_status", "read_sensors" -> "sensors"
         "get_location", "wifi_info", "network_info", "telephony_info", "bluetooth_info" -> "location"
         "storage_info", "thermal_status", "screen_info", "volume_info", "locale_info", "dnd_status" -> "state"
-        "read_notifications", "post_notification", "read_sms", "read_call_log" -> "messaging"
+        "read_notifications", "notification_action", "post_notification", "read_sms", "read_call_log" -> "messaging"
         "get_contacts", "read_calendar", "create_calendar_event" -> "personal"
         "list_files" -> "files"
         "take_photo", "record_audio", "capture_screenshot" -> "media"

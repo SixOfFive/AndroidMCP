@@ -108,9 +108,22 @@ internal object ToolSchemas {
             readOnly = true,
         ),
         "read_notifications" to Spec(
-            "List the notifications currently showing in the shade. Cannot dismiss or act on them.",
+            "List the notifications currently showing in the shade. Each entry includes a key and its " +
+                "action buttons (with indexes); pass those to notification_action to reply or tap one. " +
+                "This tool itself only reads — it cannot dismiss a notification.",
             listOf(int("limit", "How many notifications to return.", 1, 200, 20)),
             readOnly = true,
+        ),
+        "notification_action" to Spec(
+            "Reply to a notification or fire one of its action buttons. Call read_notifications first " +
+                "to get the notification's key and its action list (each action's index, and whether " +
+                "it accepts a text reply).",
+            listOf(
+                str("key", "The notification key from read_notifications, copied verbatim.", required = true),
+                int("action_index", "Which action to invoke — the index read_notifications showed for it.", min = 0, required = true),
+                str("text", "Reply text. Required for a reply action (one that accepts text); ignored for a plain button."),
+            ),
+            openWorld = true,
         ),
         "list_packages" to Spec(
             "List installed apps as label + package name. Use this to find the exact package name for `run_shortcut`.",

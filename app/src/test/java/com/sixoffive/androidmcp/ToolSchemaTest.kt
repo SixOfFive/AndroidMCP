@@ -107,6 +107,7 @@ class ToolSchemaTest {
             "toast" to "text", "share_text" to "text", "create_calendar_event" to "title",
             "root_shell" to "command", "run_shortcut" to "package",
             "torch" to "on", "post_notification" to "title", "speak" to "text",
+            "notification_action" to "key",
         )
         mustRequire.forEach { (tool, arg) ->
             val spec = ToolSchemas.specFor(tool)

@@ -42,7 +42,7 @@ object GateEngine {
 
         // Situational gates for capabilities needing special access / not yet wired
         when (cap.id) {
-            "read_notifications" -> {
+            "read_notifications", "notification_action" -> {
                 val enabled = androidx.core.app.NotificationManagerCompat
                     .getEnabledListenerPackages(ctx).contains(ctx.packageName)
                 if (!enabled) return GateResult.Denied(
