@@ -164,6 +164,20 @@ internal object ToolSchemas {
             )),
             readOnly = true,
         ),
+        "write_file" to Spec(
+            "Create or overwrite a text file inside a folder granted for WRITING. With NO arguments, " +
+                "lists the writable folders and their content:// URIs. With `folder` + `name` + " +
+                "`content`, writes the file (overwriting any file of the same name in that folder). " +
+                "Only folders added under 'Writable folders' in the app are reachable — the read-only " +
+                "folders used by list_files are never writable.",
+            listOf(
+                str("folder", "A writable folder's content:// tree URI, copied verbatim from the no-argument listing. Omit to list the writable folders instead of writing."),
+                str("name", "File name to create or overwrite — no path separators, e.g. report.md. Required when writing."),
+                str("content", "UTF-8 text to write into the file. Required when writing."),
+                str("mime", "MIME type used only when creating a new file.", default = "text/plain"),
+            ),
+            destructive = true,
+        ),
 
         // ---- capture ----
         "take_photo" to Spec(

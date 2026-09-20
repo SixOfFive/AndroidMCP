@@ -24,7 +24,8 @@ data class AppConfig(
     val enabled: Set<String> = setOf("list_capabilities"),
     val port: Int = 8765,
     val bind: String = "loopback", // loopback | lan | tailscale
-    val folders: Set<String> = emptySet(), // persisted SAF tree URIs
+    val folders: Set<String> = emptySet(), // persisted SAF tree URIs (READ-only, for list_files)
+    val writableFolders: Set<String> = emptySet(), // persisted SAF tree URIs (read+write, for write_file)
     val allowBrowser: Boolean = false, // when true, accept browser Origins + emit CORS (token still required)
     val mediaAsLinks: Boolean = false, // return media as resource_link (fetchable URL) instead of inline base64
     val tls: Boolean = false, // serve HTTPS with a self-signed cert instead of plain HTTP
@@ -46,6 +47,7 @@ object ConfigStore {
     private val KEY_PORT = intPreferencesKey("port")
     private val KEY_BIND = stringPreferencesKey("bind_mode")
     private val KEY_FOLDERS = stringSetPreferencesKey("folders")
+    private val KEY_WRITABLE = stringSetPreferencesKey("writable_folders")
     private val KEY_BROWSER = booleanPreferencesKey("allow_browser")
     private val KEY_MEDIA_LINKS = booleanPreferencesKey("media_as_links")
     private val KEY_TLS = booleanPreferencesKey("tls")
@@ -63,6 +65,7 @@ object ConfigStore {
             port = p[KEY_PORT] ?: 8765,
             bind = p[KEY_BIND] ?: "loopback",
             folders = p[KEY_FOLDERS] ?: emptySet(),
+            writableFolders = p[KEY_WRITABLE] ?: emptySet(),
             allowBrowser = p[KEY_BROWSER] ?: false,
             mediaAsLinks = p[KEY_MEDIA_LINKS] ?: false,
             tls = p[KEY_TLS] ?: false,
@@ -146,5 +149,13 @@ object ConfigStore {
 
     fun removeFolder(uri: String) = scope.launch {
         app.configDataStore.edit { p -> p[KEY_FOLDERS] = (p[KEY_FOLDERS] ?: emptySet()) - uri }
+    }
+
+    fun addWritableFolder(uri: String) = scope.launch {
+        app.configDataStore.edit { p -> p[KEY_WRITABLE] = (p[KEY_WRITABLE] ?: emptySet()) + uri }
+    }
+
+    fun removeWritableFolder(uri: String) = scope.launch {
+        app.configDataStore.edit { p -> p[KEY_WRITABLE] = (p[KEY_WRITABLE] ?: emptySet()) - uri }
     }
 }

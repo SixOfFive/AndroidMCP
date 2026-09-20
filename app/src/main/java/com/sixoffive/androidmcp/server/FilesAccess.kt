@@ -105,11 +105,24 @@ object FilesAccess {
      * opening it with another invites a parser differential where the check passes for one target
      * and the resolver fetches a different one.
      */
-    internal fun allowed(ctx: Context, uri: Uri): Boolean {
+    internal fun allowed(ctx: Context, uri: Uri): Boolean =
+        allowedIn(ctx, uri, ConfigStore.current.folders, needWrite = false)
+
+    /**
+     * May [uri] be WRITTEN, given the trees the owner granted **for writing**?
+     *
+     * A separate list from [allowed]'s: sharing a folder for reading (`list_files`) must never make
+     * it writable, so `write_file` consults only `writableFolders` and additionally requires the
+     * persisted grant to carry write permission — a read-only grant fails closed here.
+     */
+    internal fun allowedForWrite(ctx: Context, uri: Uri): Boolean =
+        allowedIn(ctx, uri, ConfigStore.current.writableFolders, needWrite = true)
+
+    private fun allowedIn(ctx: Context, uri: Uri, trees: Set<String>, needWrite: Boolean): Boolean {
         val target = SafUri.of(uri) ?: return false
         val docId = target.documentId ?: target.treeId ?: return false
 
-        for (treeStr in ConfigStore.current.folders) {
+        for (treeStr in trees) {
             val treeUri = runCatching { Uri.parse(treeStr) }.getOrNull() ?: continue
             val tree = SafUri.of(treeUri) ?: continue
             if (!target.authority.equals(tree.authority, ignoreCase = true)) continue
@@ -118,7 +131,7 @@ object FilesAccess {
             // Still holding the grant? The owner can revoke it in Settings long after we recorded
             // it. Checked against the TREE uri — a child derived from a tree grant is never itself
             // a persisted entry, so matching the child here would always fail.
-            if (!stillGranted(ctx.contentResolver, treeUri)) continue
+            if (!stillGranted(ctx.contentResolver, treeUri, needWrite)) continue
 
             if (docId == treeId) return true // the granted root itself
 
@@ -129,8 +142,10 @@ object FilesAccess {
         return false
     }
 
-    private fun stillGranted(resolver: ContentResolver, treeUri: Uri): Boolean = runCatching {
-        resolver.persistedUriPermissions.any { it.isReadPermission && it.uri == treeUri }
+    private fun stillGranted(resolver: ContentResolver, treeUri: Uri, needWrite: Boolean): Boolean = runCatching {
+        resolver.persistedUriPermissions.any {
+            it.uri == treeUri && it.isReadPermission && (!needWrite || it.isWritePermission)
+        }
     }.getOrDefault(false)
 
     /** Ask the owning provider whether [child] lives under [treeUri]. Never throws. */
@@ -230,5 +245,66 @@ object FilesAccess {
                 text + if (more) "\n… (truncated at $maxBytes bytes)" else ""
             }
         }
+    }
+
+    // ---- writing ------------------------------------------------------------------------------
+
+    /**
+     * Two modes, mirroring [read]/[listAll]:
+     *  - [folderStr] null/blank → list the writable folders and their tree URIs (nothing is written).
+     *  - [folderStr] + [name] + [content] → create or overwrite that file inside the folder.
+     *
+     * The folder must be one the owner added under "Writable folders" AND still carry a persisted
+     * write grant — checked live, so revoking it in Settings takes effect at once. A read-only shared
+     * folder can never be written: it is not in `writableFolders`, and even if its URI were passed,
+     * `stillGranted(needWrite=true)` fails closed.
+     */
+    fun writeFile(ctx: Context, folderStr: String?, name: String?, content: String?, mime: String?): String {
+        val writable = ConfigStore.current.writableFolders
+        if (writable.isEmpty()) {
+            throw ToolExecError(
+                "no writable folders granted — open androidmcp (Writable folders → Add folder) to grant " +
+                    "write access to a folder, then retry",
+            )
+        }
+        if (folderStr.isNullOrBlank()) {
+            val lines = writable.joinToString("\n") { t ->
+                val label = runCatching { DocumentFile.fromTreeUri(ctx, Uri.parse(t))?.name }.getOrNull()
+                    ?: Uri.parse(t).lastPathSegment ?: t
+                "$label  $t"
+            }
+            return "writable folders (pass one as 'folder'):\n$lines"
+        }
+
+        val nm = name?.trim()?.takeUnless { it.isBlank() }
+            ?: throw ToolArgError("provide a 'name' for the file to write")
+        if (nm.contains('/') || nm.contains('\\') || nm.startsWith(".")) {
+            throw ToolArgError("invalid file name '$nm' — no path separators, and it cannot start with '.'")
+        }
+        val body = content ?: throw ToolArgError("provide 'content' to write")
+
+        val folderUri = runCatching { Uri.parse(folderStr) }.getOrNull()
+            ?: throw ToolArgError("invalid folder uri: $folderStr")
+        if (folderStr !in writable || !stillGranted(ctx.contentResolver, folderUri, needWrite = true)) {
+            throw ToolArgError(
+                "'$folderStr' is not a granted writable folder — call write_file with no arguments to " +
+                    "list the folders you can write to, and pass one of those verbatim",
+            )
+        }
+        val tree = DocumentFile.fromTreeUri(ctx, folderUri)
+            ?: throw ToolExecError("cannot open the writable folder (the grant may have been revoked)")
+
+        val existing = runCatching { tree.findFile(nm) }.getOrNull()?.takeIf { it.isFile }
+        val target = existing
+            ?: tree.createFile(mime?.takeUnless { it.isBlank() } ?: "text/plain", nm)
+            ?: throw ToolExecError("could not create '$nm' in the folder")
+
+        val bytes = body.toByteArray(Charsets.UTF_8)
+        val out = runCatching { ctx.contentResolver.openOutputStream(target.uri, "wt") }.getOrNull()
+            ?: throw ToolExecError("could not open '$nm' for writing (the grant may have been revoked)")
+        out.use { it.write(bytes) }
+
+        val verb = if (existing != null) "overwrote" else "created"
+        return "$verb '${target.name ?: nm}' (${bytes.size} bytes) in ${tree.name ?: folderStr}\nuri: ${target.uri}"
     }
 }

@@ -681,6 +681,7 @@ object Mcp {
         "read_notifications" -> listOf(textBlk(readNotifications(args)))
         "notification_action" -> listOf(textBlk(notificationAction(args)))
         "list_files" -> listOf(textBlk(filesRunner(ctx, args)))
+        "write_file" -> listOf(textBlk(writeFileRunner(ctx, args)))
         "run_shortcut" -> listOf(textBlk(runShortcut(ctx, args)))
         "wifi_info" -> listOf(textBlk(wifiInfo(ctx)))
         "network_info" -> listOf(textBlk(networkInfo(ctx)))
@@ -925,6 +926,14 @@ object Mcp {
     private fun filesRunner(ctx: Context, args: JsonObject): String {
         val uri = args["uri"]?.jsonPrimitive?.contentOrNull
         return if (uri.isNullOrBlank()) FilesAccess.listAll(ctx) else FilesAccess.read(ctx, uri)
+    }
+
+    private fun writeFileRunner(ctx: Context, args: JsonObject): String {
+        val folder = args["folder"]?.jsonPrimitive?.contentOrNull
+        val name = args["name"]?.jsonPrimitive?.contentOrNull
+        val content = args["content"]?.jsonPrimitive?.contentOrNull
+        val mime = args["mime"]?.jsonPrimitive?.contentOrNull
+        return FilesAccess.writeFile(ctx, folder, name, content, mime)
     }
 
     // ---- wifi_info ----

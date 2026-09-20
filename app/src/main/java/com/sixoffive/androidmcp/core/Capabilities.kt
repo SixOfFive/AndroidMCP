@@ -97,6 +97,17 @@ object Capabilities {
             defaultOn = false, phase = Phase.MVP, highImpact = true,
         ),
         CapabilityMeta(
+            id = "write_file", title = "Write files",
+            why = listOf(
+                "Create or overwrite a file inside a folder you grant for writing",
+                "Let a client save output — a note, a report, an export — to your storage",
+            ),
+            permissions = emptyList(), // separate 'Writable folders' SAF read+write grant, handled by the gate
+            dataExposed = "Nothing is read; writes content you or the model provide into a folder you granted for writing",
+            risk = "High — creates or overwrites files in the folders you grant for writing (read-only shared folders are never touched)",
+            defaultOn = false, phase = Phase.V1_1, highImpact = true,
+        ),
+        CapabilityMeta(
             id = "take_photo", title = "Take photo",
             why = listOf(
                 "Capture a still photo from the front or rear camera on request",
@@ -537,7 +548,7 @@ object Capabilities {
         "storage_info", "thermal_status", "screen_info", "volume_info", "locale_info", "dnd_status" -> "state"
         "read_notifications", "notification_action", "post_notification", "read_sms", "read_call_log" -> "messaging"
         "get_contacts", "read_calendar", "create_calendar_event" -> "personal"
-        "list_files" -> "files"
+        "list_files", "write_file" -> "files"
         "take_photo", "record_audio", "capture_screenshot" -> "media"
         "read_clipboard", "write_clipboard" -> "clipboard"
         "run_shortcut", "list_packages", "launch_url", "dial", "torch", "vibrate",

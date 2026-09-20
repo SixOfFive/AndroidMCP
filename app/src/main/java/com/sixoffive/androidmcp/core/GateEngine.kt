@@ -58,6 +58,13 @@ object GateEngine {
                     true,
                 )
             }
+            "write_file" -> {
+                if (ConfigStore.current.writableFolders.isEmpty()) return GateResult.Denied(
+                    ReasonCode.SPECIAL_ACCESS_NOT_ENABLED, cap, true, false,
+                    "No writable folders yet. Open androidmcp → Writable folders → Add folder to grant write access to a folder, then retry.",
+                    true,
+                )
+            }
         }
 
         // Gate 2 — OS runtime permission (re-checked live)

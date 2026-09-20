@@ -189,6 +189,21 @@ private fun ServerScreen() {
         }
     }
 
+    val writableFolderLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+            runCatching {
+                // read+write, unlike the read-only Shared folders grant — this is the only place
+                // write access is ever taken, so write_file can only reach folders added here.
+                ctx.contentResolver.takePersistableUriPermission(
+                    uri,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                )
+            }
+            ConfigStore.addWritableFolder(uri.toString())
+        }
+    }
+
     fun granted(perms: List<String>): Boolean {
         permRefresh // read so recomposition re-checks after a grant
         if (perms.isEmpty()) return true
@@ -537,6 +552,41 @@ private fun ServerScreen() {
                                     )
                                 }
                                 ConfigStore.removeFolder(f)
+                            }) { Text("Remove") }
+                        }
+                    }
+                }
+            }
+
+            // ---- writable folders (for write_file) ----
+            item {
+                SectionCard("Writable folders") {
+                    Text(
+                        "Folders you grant here are the only ones write_file can create or overwrite files in. " +
+                            "These are separate from Shared folders, which stay read-only.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedButton(onClick = { writableFolderLauncher.launch(null) }) { Text("Add folder") }
+                    config.writableFolders.forEach { f ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                android.net.Uri.parse(f).lastPathSegment ?: f,
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            )
+                            TextButton(onClick = {
+                                // Release BOTH read and write, matching what was taken at Add time,
+                                // so the app stops accumulating grants the owner believes are gone.
+                                runCatching {
+                                    ctx.contentResolver.releasePersistableUriPermission(
+                                        android.net.Uri.parse(f),
+                                        android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                                            android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                                    )
+                                }
+                                ConfigStore.removeWritableFolder(f)
                             }) { Text("Remove") }
                         }
                     }

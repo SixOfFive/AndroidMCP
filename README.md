@@ -11,7 +11,7 @@ mic and files is a remotely-controllable surveillance surface — so every capab
 on the device *every time*. When something is blocked, the server tells the model exactly what
 to turn on.
 
-> **Status: feature-complete and device-verified.** 46 tools, a default-deny double gate,
+> **Status: feature-complete and device-verified.** 47 tools, a default-deny double gate,
 > per-call approval, hashed bearer tokens with per-token capability scoping, optional
 > self-signed TLS, and a Compose config UI — all built and tested on real hardware (a Samsung
 > phone and a Unisoc tablet) over **LAN** and **Tailscale**. The JSON-RPC and HTTP layers are
@@ -79,7 +79,7 @@ the fix. A blocked call returns a normal result with `isError: true` plus machin
 
 ## Capabilities
 
-All default-OFF except `list_capabilities`. The 41 below need **no root**; five optional
+All default-OFF except `list_capabilities`. The 42 below need **no root**; five optional
 **elevated** tools (Shizuku *or* root) are covered under [Root vs non-root](#root-vs-non-root).
 All device-verified. Tools whose hardware is absent (e.g. `dial` on a Wi-Fi-only tablet) are
 auto-marked unavailable and refuse with `HARDWARE_UNAVAILABLE`.
@@ -94,7 +94,8 @@ auto-marked unavailable and refuse with `HARDWARE_UNAVAILABLE`.
 | `post_notification` | Post to the shade | `POST_NOTIFICATIONS` | |
 | `read_notifications` | List active notifications (with keys + action buttons) | Notification Listener access | ✓ |
 | `notification_action` | Reply to / tap an action button on a notification | Notification Listener access | ✓ |
-| `list_files` | Browse + read within granted folders (list, or read by URI) | SAF grant | ✓ |
+| `list_files` | Browse + read within granted folders (list, or read by URI) | SAF grant (read-only) | ✓ |
+| `write_file` | Create / overwrite a file in a granted **writable** folder | SAF read+write grant | ✓ |
 | `take_photo` | Headless still, front/rear (Camera2) | `CAMERA` | ✓ |
 | `record_audio` | Short mic clip (MediaRecorder) | `RECORD_AUDIO` | ✓ |
 | `capture_screenshot` | Screen frame (MediaProjection) | screen-share consent | ✓ |
