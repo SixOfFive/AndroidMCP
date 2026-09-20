@@ -65,7 +65,7 @@ object GateEngine {
                     true,
                 )
             }
-            "read_screen", "global_action" -> {
+            "read_screen", "global_action", "tap", "swipe", "type_text" -> {
                 if (!com.sixoffive.androidmcp.server.McpAccessibilityService.isConnected()) return GateResult.Denied(
                     ReasonCode.SPECIAL_ACCESS_NOT_ENABLED, cap, true, false,
                     "Grant Accessibility access to androidmcp in Android settings (Accessibility → androidmcp → On; sideloaded apps must first tap 'Allow restricted settings').",

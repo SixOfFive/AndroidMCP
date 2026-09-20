@@ -308,6 +308,32 @@ internal object ToolSchemas {
                 enum = listOf("back", "home", "recents", "notifications", "quick_settings",
                     "lock_screen", "screenshot", "power_dialog"))),
         ),
+        "tap" to Spec(
+            "Tap a point on the screen via the accessibility service (no root). Read `read_screen` first " +
+                "to get an element's centre coordinate.",
+            listOf(
+                int("x", "X in absolute screen PIXELS (not a percentage), from read_screen.", min = 0, required = true),
+                int("y", "Y in absolute screen pixels.", min = 0, required = true),
+            ),
+            destructive = true, openWorld = true,
+        ),
+        "swipe" to Spec(
+            "Swipe/scroll from one point to another via the accessibility service (no root).",
+            listOf(
+                int("x", "Start X in absolute screen pixels.", min = 0, required = true),
+                int("y", "Start Y in absolute screen pixels.", min = 0, required = true),
+                int("x2", "End X in absolute screen pixels.", min = 0, required = true),
+                int("y2", "End Y in absolute screen pixels.", min = 0, required = true),
+                int("duration_ms", "Swipe duration in milliseconds.", 50, 5000, 300),
+            ),
+            destructive = true, openWorld = true,
+        ),
+        "type_text" to Spec(
+            "Replace the text of the currently focused input field via the accessibility service (no " +
+                "root). Focus a field first (e.g. tap it), then type. Sets the field's whole contents.",
+            listOf(str("text", "The text to place in the focused field.", required = true)),
+            destructive = true, openWorld = true,
+        ),
 
         // ---- elevated ----
         "elevated_input" to Spec(

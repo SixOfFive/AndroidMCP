@@ -1,11 +1,16 @@
 package com.sixoffive.androidmcp.server
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.GestureDescription
 import android.content.Intent
+import android.graphics.Path
 import android.graphics.Rect
 import android.os.Build
+import android.os.Bundle
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * Accessibility service — the non-root path to reading on-screen content and driving the UI.
@@ -109,6 +114,66 @@ class McpAccessibilityService : AccessibilityService() {
             @Suppress("DEPRECATION") runCatching { root.recycle() }
             if (count >= maxNodes) sb.append("… (truncated at $maxNodes nodes)\n")
             return sb.toString().trim()
+        }
+
+        /** A single tap at absolute screen pixels, dispatched as a short gesture. */
+        fun tap(x: Int, y: Int): String {
+            val svc = requireSvc()
+            val path = Path().apply { moveTo(x.toFloat(), y.toFloat()) }
+            val gesture = GestureDescription.Builder()
+                .addStroke(GestureDescription.StrokeDescription(path, 0, 50)).build()
+            dispatch(svc, gesture)
+            return "tapped ($x, $y)"
+        }
+
+        /** A swipe from (x1,y1) to (x2,y2) over [durationMs]. */
+        fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Int): String {
+            val svc = requireSvc()
+            val path = Path().apply { moveTo(x1.toFloat(), y1.toFloat()); lineTo(x2.toFloat(), y2.toFloat()) }
+            val gesture = GestureDescription.Builder()
+                .addStroke(GestureDescription.StrokeDescription(path, 0, durationMs.toLong())).build()
+            dispatch(svc, gesture)
+            return "swiped ($x1, $y1) → ($x2, $y2) over ${durationMs}ms"
+        }
+
+        /** Replace the text of the currently focused editable field. */
+        fun typeText(text: String): String {
+            val svc = requireSvc()
+            val root = svc.rootInActiveWindow
+                ?: throw ToolExecError("no active window (the screen may be secure) — retry")
+            val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+                ?: throw ToolExecError("no text field is focused — tap a field first (e.g. with `tap`), then type")
+            try {
+                if (!focused.isEditable) throw ToolExecError("the focused element isn't a text field")
+                val args = Bundle().apply {
+                    putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+                }
+                if (!focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) {
+                    throw ToolExecError("the focused field refused the text (it may not support programmatic input)")
+                }
+                return "set the focused field to ${text.length} character(s)"
+            } finally {
+                @Suppress("DEPRECATION") runCatching { focused.recycle(); root.recycle() }
+            }
+        }
+
+        private fun requireSvc(): McpAccessibilityService = instance
+            ?: throw ToolExecError("accessibility service isn't connected — grant it in Android Settings (Accessibility → androidmcp), then retry")
+
+        /** Dispatch a gesture and block until the system reports it done (or times out). */
+        private fun dispatch(svc: McpAccessibilityService, gesture: GestureDescription) {
+            val latch = CountDownLatch(1)
+            var cancelled = false
+            val cb = object : AccessibilityService.GestureResultCallback() {
+                override fun onCompleted(g: GestureDescription?) { latch.countDown() }
+                override fun onCancelled(g: GestureDescription?) { cancelled = true; latch.countDown() }
+            }
+            // handler=null → the callback runs on the service's main thread; we block Dispatchers.IO.
+            if (!svc.dispatchGesture(gesture, cb, null)) {
+                throw ToolExecError("the system rejected the gesture (dispatchGesture returned false)")
+            }
+            if (!latch.await(10, TimeUnit.SECONDS)) throw ToolExecError("the gesture did not complete in time")
+            if (cancelled) throw ToolExecError("the gesture was cancelled by the system")
         }
     }
 }

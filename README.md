@@ -11,7 +11,7 @@ mic and files is a remotely-controllable surveillance surface — so every capab
 on the device *every time*. When something is blocked, the server tells the model exactly what
 to turn on.
 
-> **Status: feature-complete and device-verified.** 49 tools, a default-deny double gate,
+> **Status: feature-complete and device-verified.** 52 tools, a default-deny double gate,
 > per-call approval, hashed bearer tokens with per-token capability scoping, optional
 > self-signed TLS, and a Compose config UI — all built and tested on real hardware (a Samsung
 > phone and a Unisoc tablet) over **LAN** and **Tailscale**. The JSON-RPC and HTTP layers are
@@ -79,7 +79,7 @@ the fix. A blocked call returns a normal result with `isError: true` plus machin
 
 ## Capabilities
 
-All default-OFF except `list_capabilities`. The 44 below need **no root**; five optional
+All default-OFF except `list_capabilities`. The 47 below need **no root**; five optional
 **elevated** tools (Shizuku *or* root) are covered under [Root vs non-root](#root-vs-non-root).
 All device-verified. Tools whose hardware is absent (e.g. `dial` on a Wi-Fi-only tablet) are
 auto-marked unavailable and refuse with `HARDWARE_UNAVAILABLE`.
@@ -101,6 +101,9 @@ auto-marked unavailable and refuse with `HARDWARE_UNAVAILABLE`.
 | `capture_screenshot` | Screen frame (MediaProjection) | screen-share consent | ✓ |
 | `read_screen` | Structured on-screen content (accessibility node tree, no root) | Accessibility access | ✓ |
 | `global_action` | Navigate: back / home / recents / notifications / quick-settings / lock / screenshot | Accessibility access | ✓ |
+| `tap` | Tap a screen coordinate (no root) | Accessibility access | ✓ |
+| `swipe` | Swipe / scroll between two points (no root) | Accessibility access | ✓ |
+| `type_text` | Type into the focused field (no root) | Accessibility access | ✓ |
 | `read_sms` | Recent received texts | `READ_SMS` | ✓ |
 | `read_call_log` | Recent call history | `READ_CALL_LOG` | ✓ |
 | `read_clipboard` / `write_clipboard` | Get / set clipboard | none | read ✓ |

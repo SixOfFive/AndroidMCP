@@ -479,6 +479,39 @@ object Capabilities {
             defaultOn = false, phase = Phase.V1_1, highImpact = true, rootRequired = false,
         ),
         CapabilityMeta(
+            id = "tap", title = "Tap (accessibility)",
+            why = listOf(
+                "Tap a point on the screen (use read_screen to find an element's coordinates)",
+                "Let a client operate the UI of any app without root",
+            ),
+            permissions = emptyList(), // Accessibility special access, handled by the gate
+            dataExposed = "Nothing is read; injects a tap at a screen coordinate you approve",
+            risk = "Critical — can operate any app and confirm irreversible actions as if you tapped the screen",
+            defaultOn = false, phase = Phase.V1_1, highImpact = true, rootRequired = false,
+        ),
+        CapabilityMeta(
+            id = "swipe", title = "Swipe (accessibility)",
+            why = listOf(
+                "Swipe or scroll between two points on the screen",
+                "Let a client scroll lists, dismiss, or drag without root",
+            ),
+            permissions = emptyList(), // Accessibility special access, handled by the gate
+            dataExposed = "Nothing is read; injects a swipe gesture you approve",
+            risk = "High — can scroll, dismiss, and drag anywhere on screen",
+            defaultOn = false, phase = Phase.V1_1, highImpact = true, rootRequired = false,
+        ),
+        CapabilityMeta(
+            id = "type_text", title = "Type text (accessibility)",
+            why = listOf(
+                "Set the text of the currently focused input field",
+                "Let a client fill a field without root",
+            ),
+            permissions = emptyList(), // Accessibility special access, handled by the gate
+            dataExposed = "Nothing is read; replaces the focused field's text with content you provide",
+            risk = "High — writes into whatever field is focused, in any app",
+            defaultOn = false, phase = Phase.V1_1, highImpact = true, rootRequired = false,
+        ),
+        CapabilityMeta(
             id = "elevated_current_app", title = "Foreground app (Shizuku/root)",
             why = listOf(
                 "Report the app/activity currently in the foreground via the shell (needs Shizuku or root)",
@@ -576,7 +609,7 @@ object Capabilities {
         "read_clipboard", "write_clipboard" -> "clipboard"
         "run_shortcut", "list_packages", "launch_url", "dial", "torch", "vibrate",
         "set_volume", "media_control", "toast", "share_text", "open_settings", "speak" -> "actions"
-        "read_screen", "global_action" -> "accessibility"
+        "read_screen", "global_action", "tap", "swipe", "type_text" -> "accessibility"
         "root_screenshot", "root_shell", "elevated_input", "elevated_current_app", "elevated_settings" -> "elevated"
         else -> "actions"
     }

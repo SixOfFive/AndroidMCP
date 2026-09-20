@@ -108,6 +108,7 @@ class ToolSchemaTest {
             "root_shell" to "command", "run_shortcut" to "package",
             "torch" to "on", "post_notification" to "title", "speak" to "text",
             "notification_action" to "key", "global_action" to "action",
+            "tap" to "x", "swipe" to "x", "type_text" to "text",
         )
         mustRequire.forEach { (tool, arg) ->
             val spec = ToolSchemas.specFor(tool)
@@ -193,7 +194,8 @@ class ToolSchemaTest {
             "create_calendar_event", "set_volume", "torch", "vibrate", "launch_url", "run_shortcut")
             .forEach { assertTrue(!ToolSchemas.specFor(it).readOnly, "'$it' must not be marked readOnly") }
         // ...and the highest-blast-radius ones must be flagged destructive.
-        listOf("root_shell", "elevated_input", "elevated_settings", "write_clipboard", "create_calendar_event")
+        listOf("root_shell", "elevated_input", "elevated_settings", "write_clipboard", "create_calendar_event",
+            "write_file", "tap", "swipe", "type_text")
             .forEach { assertTrue(ToolSchemas.specFor(it).destructive, "'$it' must be marked destructive") }
     }
 

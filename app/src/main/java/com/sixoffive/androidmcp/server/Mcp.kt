@@ -705,6 +705,9 @@ object Mcp {
         "create_calendar_event" -> listOf(textBlk(createCalendarEvent(ctx, args)))
         "read_screen" -> listOf(textBlk(readScreen(args)))
         "global_action" -> listOf(textBlk(globalAction(args)))
+        "tap" -> listOf(textBlk(a11yTap(args)))
+        "swipe" -> listOf(textBlk(a11ySwipe(args)))
+        "type_text" -> listOf(textBlk(a11yTypeText(args)))
         "elevated_current_app" -> listOf(textBlk(elevatedCurrentApp(ctx)))
         "elevated_settings" -> listOf(textBlk(elevatedSettings(ctx, args)))
         "root_screenshot" -> rootScreenshot()
@@ -925,6 +928,26 @@ object Mcp {
         val action = args["action"]?.jsonPrimitive?.contentOrNull?.trim()?.takeUnless { it.isBlank() }
             ?: throw ToolArgError("provide an 'action': back, home, recents, notifications, quick_settings, lock_screen, screenshot, or power_dialog")
         return McpAccessibilityService.globalAction(action)
+    }
+
+    private fun a11yTap(args: JsonObject): String {
+        val x = args["x"]?.jsonPrimitive?.intOrNull ?: throw ToolArgError("provide integer 'x' and 'y' in screen pixels (see read_screen)")
+        val y = args["y"]?.jsonPrimitive?.intOrNull ?: throw ToolArgError("provide integer 'x' and 'y' in screen pixels (see read_screen)")
+        if (x < 0 || y < 0) throw ToolArgError("x and y must be >= 0")
+        return McpAccessibilityService.tap(x, y)
+    }
+
+    private fun a11ySwipe(args: JsonObject): String {
+        fun req(k: String) = args[k]?.jsonPrimitive?.intOrNull ?: throw ToolArgError("swipe needs integer 'x', 'y', 'x2', and 'y2' in screen pixels")
+        val x = req("x"); val y = req("y"); val x2 = req("x2"); val y2 = req("y2")
+        if (x < 0 || y < 0 || x2 < 0 || y2 < 0) throw ToolArgError("coordinates must be >= 0")
+        val dur = (args["duration_ms"]?.jsonPrimitive?.intOrNull ?: 300).coerceIn(50, 5000)
+        return McpAccessibilityService.swipe(x, y, x2, y2, dur)
+    }
+
+    private fun a11yTypeText(args: JsonObject): String {
+        val text = args["text"]?.jsonPrimitive?.contentOrNull ?: throw ToolArgError("provide 'text' to type into the focused field")
+        return McpAccessibilityService.typeText(text)
     }
 
     private fun notificationAction(args: JsonObject): String {
