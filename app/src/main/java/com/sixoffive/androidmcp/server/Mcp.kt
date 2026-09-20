@@ -1319,12 +1319,27 @@ object Mcp {
     private fun deleteContact(ctx: Context, args: JsonObject): String {
         val name = args["name"]?.jsonPrimitive?.contentOrNull?.takeUnless { it.isBlank() }
             ?: throw ToolArgError("provide the exact 'name' of the contact to delete")
-        val n = runCatching {
-            ctx.contentResolver.delete(
-                ContactsContract.Contacts.CONTENT_URI,
-                "${ContactsContract.Contacts.DISPLAY_NAME}=?", arrayOf(name))
-        }.getOrElse { throw ToolExecError("deleting the contact failed (${it.javaClass.simpleName})") }
-        if (n == 0) throw ToolExecError("no contact named \"$name\" was found")
+        // Find the aggregated contact id(s) by display name, then delete by id — a selection-based
+        // delete on Contacts.CONTENT_URI silently matches nothing, but delete by appended id cascades
+        // to the raw contacts. Requires READ_CONTACTS to look up, WRITE_CONTACTS to delete.
+        val ids = ArrayList<Long>()
+        val cur = runCatching {
+            ctx.contentResolver.query(
+                ContactsContract.Contacts.CONTENT_URI, arrayOf(ContactsContract.Contacts._ID),
+                "${ContactsContract.Contacts.DISPLAY_NAME}=?", arrayOf(name), null)
+        }.getOrElse { throw ToolExecError("contacts provider not accessible") }
+            ?: throw ToolExecError("contacts provider not accessible")
+        cur.use { c ->
+            val ix = c.getColumnIndex(ContactsContract.Contacts._ID)
+            while (c.moveToNext()) if (ix >= 0) ids.add(c.getLong(ix))
+        }
+        if (ids.isEmpty()) throw ToolExecError("no contact named \"$name\" was found")
+        var n = 0
+        for (id in ids) {
+            val uri = android.content.ContentUris.withAppendedId(ContactsContract.Contacts.CONTENT_URI, id)
+            n += runCatching { ctx.contentResolver.delete(uri, null, null) }.getOrDefault(0)
+        }
+        if (n == 0) throw ToolExecError("found contact \"$name\" but the provider refused to delete it")
         return "Deleted $n contact(s) named \"$name\"."
     }
 

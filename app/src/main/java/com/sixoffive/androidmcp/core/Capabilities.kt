@@ -586,7 +586,8 @@ object Capabilities {
                 "Delete a contact by display name — the inverse of write_contact",
                 "Remove a contact on request",
             ),
-            permissions = listOf("android.permission.WRITE_CONTACTS"),
+            // Reads to find the contact by name, then writes to delete it.
+            permissions = listOf("android.permission.READ_CONTACTS", "android.permission.WRITE_CONTACTS"),
             dataExposed = "Nothing is read; removes a contact (and its numbers/emails) from your address book",
             risk = "High — permanently deletes contacts",
             defaultOn = false, phase = Phase.V1_1, highImpact = true, rootRequired = false,
