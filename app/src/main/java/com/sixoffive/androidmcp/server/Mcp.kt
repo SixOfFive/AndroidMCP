@@ -8,9 +8,12 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.location.LocationManager
+import android.provider.CalendarContract.Events
 import android.provider.CalendarContract.Instances
 import android.provider.ContactsContract
+import android.provider.ContactsContract.CommonDataKinds.Email
 import android.provider.ContactsContract.CommonDataKinds.Phone
+import android.provider.ContactsContract.Data
 import android.os.BatteryManager
 import android.os.Build
 import android.os.SystemClock
@@ -840,6 +843,13 @@ object Mcp {
         "delete_contact" -> listOf(textBlk(deleteContact(ctx, args)))
         "delete_calendar_event" -> listOf(textBlk(deleteCalendarEvent(ctx, args)))
         "delete_file" -> listOf(textBlk(deleteFileRunner(ctx, args)))
+        "send_sms" -> listOf(textBlk(sendSms(ctx, args)))
+        "place_call" -> listOf(textBlk(placeCall(ctx, args)))
+        "update_calendar_event" -> listOf(textBlk(updateCalendarEvent(ctx, args)))
+        "update_contact" -> listOf(textBlk(updateContact(ctx, args)))
+        "rename_file" -> listOf(textBlk(renameFileRunner(ctx, args)))
+        "set_screen_timeout" -> listOf(textBlk(setScreenTimeout(ctx, args)))
+        "set_alarm" -> listOf(textBlk(setAlarm(ctx, args)))
         "elevated_current_app" -> listOf(textBlk(elevatedCurrentApp(ctx)))
         "elevated_settings" -> listOf(textBlk(elevatedSettings(ctx, args)))
         "root_screenshot" -> rootScreenshot()
@@ -1358,6 +1368,152 @@ object Mcp {
         val uri = args["uri"]?.jsonPrimitive?.contentOrNull?.takeUnless { it.isBlank() }
             ?: throw ToolArgError("provide the content:// 'uri' of the file to delete (from list_files or write_file)")
         return FilesAccess.deleteFile(ctx, uri)
+    }
+
+    // ---- Wave 7 (comms + fills) ----
+
+    private fun sendSms(ctx: Context, args: JsonObject): String {
+        val to = args["to"]?.jsonPrimitive?.contentOrNull?.trim()?.takeUnless { it.isBlank() }
+            ?: throw ToolArgError("provide 'to' (destination phone number)")
+        val msg = args["message"]?.jsonPrimitive?.contentOrNull?.takeUnless { it.isBlank() }
+            ?: throw ToolArgError("provide a 'message' to send")
+        val sm = (if (Build.VERSION.SDK_INT >= 31) ctx.getSystemService(android.telephony.SmsManager::class.java)
+        else @Suppress("DEPRECATION") android.telephony.SmsManager.getDefault())
+            ?: throw ToolExecError("SMS is not available on this device")
+        val parts = runCatching { sm.divideMessage(msg) }.getOrNull() ?: java.util.ArrayList()
+        runCatching {
+            if (parts.size > 1) sm.sendMultipartTextMessage(to, null, parts, null, null)
+            else sm.sendTextMessage(to, null, msg, null, null)
+        }.getOrElse { throw ToolExecError("sending the SMS failed (${it.javaClass.simpleName}: ${it.message})") }
+        return "Sent SMS to $to (${msg.length} chars" + (if (parts.size > 1) ", ${parts.size} parts" else "") + ")."
+    }
+
+    private fun placeCall(ctx: Context, args: JsonObject): String {
+        val number = args["number"]?.jsonPrimitive?.contentOrNull?.trim()?.takeUnless { it.isBlank() }
+            ?: throw ToolArgError("provide a 'number' to call")
+        val intent = Intent(Intent.ACTION_CALL, android.net.Uri.fromParts("tel", number, null))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { ctx.startActivity(intent) }.getOrElse {
+            if (it is SecurityException) throw ToolExecError("call permission missing — grant CALL_PHONE to androidmcp")
+            throw ToolExecError("could not place the call (${it.javaClass.simpleName}) — Android may block starting a call while the app is in the background")
+        }
+        return "Placed a call to $number."
+    }
+
+    private fun updateCalendarEvent(ctx: Context, args: JsonObject): String {
+        val id = args["event_id"]?.jsonPrimitive?.longOrNull
+            ?: throw ToolArgError("provide integer 'event_id' (from read_calendar)")
+        val title = args["title"]?.jsonPrimitive?.contentOrNull?.trim()?.takeUnless { it.isBlank() }
+        val start = args["start_epoch_ms"]?.jsonPrimitive?.longOrNull
+        val durMin = args["duration_minutes"]?.jsonPrimitive?.intOrNull
+        val loc = args["location"]?.jsonPrimitive?.contentOrNull
+        if (title == null && start == null && durMin == null && loc == null) {
+            throw ToolArgError("provide at least one of title, start_epoch_ms, duration_minutes, location")
+        }
+        val uri = android.content.ContentUris.withAppendedId(Events.CONTENT_URI, id)
+        val values = android.content.ContentValues()
+        title?.let { values.put(Events.TITLE, it) }
+        loc?.let { values.put(Events.EVENT_LOCATION, it) }
+        if (start != null || durMin != null) {
+            // Read the current times so a start-only change preserves duration, and a duration-only
+            // change keeps the start.
+            var exStart = 0L; var exEnd = 0L
+            ctx.contentResolver.query(uri, arrayOf(Events.DTSTART, Events.DTEND), null, null, null)?.use { c ->
+                if (c.moveToFirst()) { exStart = c.getLong(0); exEnd = c.getLong(1) }
+            } ?: throw ToolExecError("could not read event $id (check READ_CALENDAR)")
+            if (exStart == 0L) throw ToolExecError("no calendar event with id $id was found")
+            val newStart = start ?: exStart
+            val newEnd = if (durMin != null) newStart + durMin.toLong() * 60_000L else newStart + (exEnd - exStart)
+            values.put(Events.DTSTART, newStart)
+            values.put(Events.DTEND, newEnd)
+        }
+        val n = runCatching { ctx.contentResolver.update(uri, values, null, null) }
+            .getOrElse { throw ToolExecError("updating the event failed (${it.javaClass.simpleName})") }
+        if (n == 0) throw ToolExecError("no calendar event with id $id was found")
+        return "Updated calendar event $id."
+    }
+
+    private fun updateContact(ctx: Context, args: JsonObject): String {
+        val name = args["name"]?.jsonPrimitive?.contentOrNull?.takeUnless { it.isBlank() }
+            ?: throw ToolArgError("provide the exact 'name' of the contact to update")
+        val phone = args["phone"]?.jsonPrimitive?.contentOrNull?.takeUnless { it.isBlank() }
+        val email = args["email"]?.jsonPrimitive?.contentOrNull?.takeUnless { it.isBlank() }
+        if (phone == null && email == null) throw ToolArgError("provide 'phone' and/or 'email' to set")
+        val cr = ctx.contentResolver
+        // contact id by display name
+        var contactId = -1L
+        runCatching {
+            cr.query(ContactsContract.Contacts.CONTENT_URI, arrayOf(ContactsContract.Contacts._ID),
+                "${ContactsContract.Contacts.DISPLAY_NAME}=?", arrayOf(name), null)
+        }.getOrElse { throw ToolExecError("contacts provider not accessible") }?.use { c ->
+            if (c.moveToFirst()) contactId = c.getLong(0)
+        }
+        if (contactId < 0) throw ToolExecError("no contact named \"$name\" was found")
+        // first raw contact for that aggregated contact
+        var rawId = -1L
+        cr.query(ContactsContract.RawContacts.CONTENT_URI, arrayOf(ContactsContract.RawContacts._ID),
+            "${ContactsContract.RawContacts.CONTACT_ID}=?", arrayOf(contactId.toString()), null)?.use { c ->
+            if (c.moveToFirst()) rawId = c.getLong(0)
+        }
+        if (rawId < 0) throw ToolExecError("contact \"$name\" has no editable raw contact")
+        val changed = ArrayList<String>()
+        if (phone != null) {
+            cr.delete(Data.CONTENT_URI, "${Data.RAW_CONTACT_ID}=? AND ${Data.MIMETYPE}=?",
+                arrayOf(rawId.toString(), Phone.CONTENT_ITEM_TYPE))
+            cr.insert(Data.CONTENT_URI, android.content.ContentValues().apply {
+                put(Data.RAW_CONTACT_ID, rawId); put(Data.MIMETYPE, Phone.CONTENT_ITEM_TYPE)
+                put(Phone.NUMBER, phone); put(Phone.TYPE, Phone.TYPE_MOBILE)
+            })
+            changed.add("phone")
+        }
+        if (email != null) {
+            cr.delete(Data.CONTENT_URI, "${Data.RAW_CONTACT_ID}=? AND ${Data.MIMETYPE}=?",
+                arrayOf(rawId.toString(), Email.CONTENT_ITEM_TYPE))
+            cr.insert(Data.CONTENT_URI, android.content.ContentValues().apply {
+                put(Data.RAW_CONTACT_ID, rawId); put(Data.MIMETYPE, Email.CONTENT_ITEM_TYPE)
+                put(Email.ADDRESS, email); put(Email.TYPE, Email.TYPE_HOME)
+            })
+            changed.add("email")
+        }
+        return "Updated contact \"$name\": set ${changed.joinToString(" and ")}."
+    }
+
+    private fun renameFileRunner(ctx: Context, args: JsonObject): String {
+        val uri = args["uri"]?.jsonPrimitive?.contentOrNull?.takeUnless { it.isBlank() }
+            ?: throw ToolArgError("provide the content:// 'uri' of the file to rename (from list_files or write_file)")
+        val newName = args["new_name"]?.jsonPrimitive?.contentOrNull
+            ?: throw ToolArgError("provide 'new_name'")
+        return FilesAccess.renameFile(ctx, uri, newName)
+    }
+
+    private fun setScreenTimeout(ctx: Context, args: JsonObject): String {
+        val sec = (args["seconds"]?.jsonPrimitive?.intOrNull
+            ?: throw ToolArgError("provide 'seconds' (5–3600)")).coerceIn(5, 3600)
+        runCatching {
+            android.provider.Settings.System.putInt(
+                ctx.contentResolver, android.provider.Settings.System.SCREEN_OFF_TIMEOUT, sec * 1000)
+        }.getOrElse { throw ToolExecError("setting the screen timeout failed (${it.javaClass.simpleName}) — check 'Modify system settings' access") }
+        return "Screen-off timeout set to ${sec}s."
+    }
+
+    private fun setAlarm(ctx: Context, args: JsonObject): String {
+        val hour = args["hour"]?.jsonPrimitive?.intOrNull
+            ?: throw ToolArgError("provide 'hour' (0–23)")
+        if (hour !in 0..23) throw ToolArgError("hour must be 0–23")
+        val minute = (args["minute"]?.jsonPrimitive?.intOrNull ?: 0).coerceIn(0, 59)
+        val label = args["label"]?.jsonPrimitive?.contentOrNull?.takeUnless { it.isBlank() }
+        val intent = Intent(android.provider.AlarmClock.ACTION_SET_ALARM).apply {
+            putExtra(android.provider.AlarmClock.EXTRA_HOUR, hour)
+            putExtra(android.provider.AlarmClock.EXTRA_MINUTES, minute)
+            putExtra(android.provider.AlarmClock.EXTRA_SKIP_UI, true)
+            label?.let { putExtra(android.provider.AlarmClock.EXTRA_MESSAGE, it) }
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        runCatching { ctx.startActivity(intent) }.getOrElse {
+            if (it is android.content.ActivityNotFoundException) throw ToolExecError("no clock app on this device can set an alarm")
+            throw ToolExecError("could not set the alarm (${it.javaClass.simpleName})")
+        }
+        return "Set an alarm for %02d:%02d".format(hour, minute) + (if (label != null) " (\"$label\")" else "") + "."
     }
 
     private fun notificationAction(args: JsonObject): String {

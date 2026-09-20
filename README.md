@@ -11,7 +11,7 @@ mic and files is a remotely-controllable surveillance surface — so every capab
 on the device *every time*. When something is blocked, the server tells the model exactly what
 to turn on.
 
-> **Status: feature-complete and device-verified.** 61 tools, a default-deny double gate,
+> **Status: feature-complete and device-verified.** 68 tools, a default-deny double gate,
 > per-call approval, hashed bearer tokens with per-token capability scoping, optional
 > self-signed TLS, optional remote approval via MCP elicitation, and a Compose config UI — all
 > built and tested on real hardware (a Samsung phone and a Unisoc tablet) over **LAN** and
@@ -88,7 +88,7 @@ the fix. A blocked call returns a normal result with `isError: true` plus machin
 
 ## Capabilities
 
-All default-OFF except `list_capabilities`. The 56 below need **no root**; five optional
+All default-OFF except `list_capabilities`. The 63 below need **no root**; five optional
 **elevated** tools (Shizuku *or* root) are covered under [Root vs non-root](#root-vs-non-root).
 All device-verified. Tools whose hardware is absent (e.g. `dial` on a Wi-Fi-only tablet) are
 auto-marked unavailable and refuse with `HARDWARE_UNAVAILABLE`.
@@ -106,6 +106,7 @@ auto-marked unavailable and refuse with `HARDWARE_UNAVAILABLE`.
 | `list_files` | Browse + read within granted folders (list, or read by URI) | SAF grant (read-only) | ✓ |
 | `write_file` | Create / overwrite a file in a granted **writable** folder | SAF read+write grant | ✓ |
 | `delete_file` | Delete a file inside a granted **writable** folder | SAF read+write grant | ✓ |
+| `rename_file` | Rename a file inside a granted **writable** folder | SAF read+write grant | ✓ |
 | `media_search` | Search the media library by type / date / album (metadata only) | `READ_MEDIA_*` (image/video/audio) | ✓ |
 | `take_photo` | Headless still, front/rear (Camera2) | `CAMERA` | ✓ |
 | `record_audio` | Short mic clip (MediaRecorder) | `RECORD_AUDIO` | ✓ |
@@ -117,9 +118,11 @@ auto-marked unavailable and refuse with `HARDWARE_UNAVAILABLE`.
 | `swipe` | Swipe / scroll between two points (no root) | Accessibility access | ✓ |
 | `type_text` | Type into the focused field (no root) | Accessibility access | ✓ |
 | `read_sms` | Recent received texts | `READ_SMS` | ✓ |
+| `send_sms` | Send a text message | `SEND_SMS` | ✓ |
 | `read_call_log` | Recent call history | `READ_CALL_LOG` | ✓ |
 | `read_clipboard` / `write_clipboard` | Get / set clipboard | none | read ✓ |
 | `run_shortcut` | Launch an app by package | none | ✓ |
+| `set_alarm` | Create a clock alarm at a given time | `SET_ALARM` (install-time) | ✓ |
 | `wifi_info` | Wi‑Fi signal (RSSI/level), link speed, frequency, SSID | `ACCESS_WIFI_STATE` (install-time) | |
 | `network_info` | Active transport, connected/metered, carrier | none | |
 | `telephony_info` | Operator, SIM state, roaming, data state, signal level, country | none | |
@@ -128,6 +131,7 @@ auto-marked unavailable and refuse with `HARDWARE_UNAVAILABLE`.
 | `thermal_status` | Thermal status + headroom | none | |
 | `screen_info` | Resolution, density, refresh, rotation, timeout | none | |
 | `set_brightness` | Set screen brightness (0–100%) | Modify-system-settings access | ✓ |
+| `set_screen_timeout` | Set the screen-off timeout (seconds) | Modify-system-settings access | ✓ |
 | `volume_info` | Per-stream volumes + ringer mode | none | |
 | `locale_info` | Language, region, timezone, 24h setting, local time | none | |
 | `dnd_status` | Do Not Disturb / interruption filter + policy access | none | |
@@ -138,12 +142,15 @@ auto-marked unavailable and refuse with `HARDWARE_UNAVAILABLE`.
 | `foreground_app` | Current foreground app + optional recent usage (no root) | Usage access (special) | ✓ |
 | `launch_url` | Open a URL (ACTION_VIEW) | none | ✓ |
 | `dial` | Pre-fill the dialer (does not call) | none | ✓ |
+| `place_call` | Place a call directly (vs `dial`, which just opens the dialer) | `CALL_PHONE` | ✓ |
 | `get_contacts` | Look up contacts (name + numbers) | `READ_CONTACTS` | ✓ |
 | `write_contact` | Add / update a contact (name, phone, email) | `WRITE_CONTACTS` | ✓ |
+| `update_contact` | Set a phone/email on an existing contact | `READ`+`WRITE_CONTACTS` | ✓ |
 | `delete_contact` | Delete a contact by display name | `WRITE_CONTACTS` | ✓ |
 | `read_calendar` | Upcoming calendar events | `READ_CALENDAR` | ✓ |
 | `create_calendar_event` | Insert a calendar event | `READ_CALENDAR` + `WRITE_CALENDAR` | ✓ |
 | `delete_calendar_event` | Delete a calendar event by id | `WRITE_CALENDAR` | ✓ |
+| `update_calendar_event` | Edit an event's title/time/location by id | `READ`+`WRITE_CALENDAR` | ✓ |
 | `set_volume` | Set a stream's volume | `MODIFY_AUDIO_SETTINGS` (install-time) | ✓ |
 | `media_control` | Send a media key (play/pause/next…) | none | ✓ |
 | `toast` | Show a toast on screen | none | |

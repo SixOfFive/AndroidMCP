@@ -11,6 +11,12 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.READ_SMS" />
     <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    <!-- send_sms / place_call (Wave 7): send a text, place a call. Read sides use READ_SMS /
+         READ_CALL_LOG above. Both are telephony — auto HARDWARE_UNAVAILABLE on a Wi-Fi-only device. -->
+    <uses-permission android:name="android.permission.SEND_SMS" />
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <!-- set_alarm (Wave 7): create an alarm via AlarmClock. A normal, auto-granted permission. -->
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />

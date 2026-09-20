@@ -614,6 +614,85 @@ object Capabilities {
             risk = "High — permanently deletes files (only inside folders you granted for writing)",
             defaultOn = false, phase = Phase.V1_1, highImpact = true, rootRequired = false,
         ),
+        // ---- Wave 7 (comms + fills) ----
+        CapabilityMeta(
+            id = "send_sms", title = "Send SMS",
+            why = listOf(
+                "Send a text message to a number — the write side of read_sms",
+                "Let a client send an SMS on request",
+            ),
+            permissions = listOf("android.permission.SEND_SMS"),
+            dataExposed = "Nothing is read; sends a text message from this device (may cost money)",
+            risk = "High — sends messages to real people and can incur charges",
+            defaultOn = false, phase = Phase.V1_1, highImpact = true, rootRequired = false,
+        ),
+        CapabilityMeta(
+            id = "place_call", title = "Place call",
+            why = listOf(
+                "Place a phone call directly (unlike dial, which only opens the dialer)",
+                "Let a client start a call on request",
+            ),
+            permissions = listOf("android.permission.CALL_PHONE"),
+            dataExposed = "Nothing is read; starts a phone call from this device",
+            risk = "High — initiates a real call to a real number",
+            defaultOn = false, phase = Phase.V1_1, highImpact = true, rootRequired = false,
+        ),
+        CapabilityMeta(
+            id = "update_calendar_event", title = "Update calendar event",
+            why = listOf(
+                "Change an existing event's title, time or location by id — the edit side of the calendar tools",
+                "Reschedule or amend an event on request",
+            ),
+            // Reads the current event (to preserve duration when only the start moves) then writes.
+            permissions = listOf("android.permission.READ_CALENDAR", "android.permission.WRITE_CALENDAR"),
+            dataExposed = "Nothing is read; modifies an existing calendar event",
+            risk = "High — changes calendar entries",
+            defaultOn = false, phase = Phase.V1_1, highImpact = true, rootRequired = false,
+        ),
+        CapabilityMeta(
+            id = "update_contact", title = "Update contact",
+            why = listOf(
+                "Add or replace a phone/email on an existing contact matched by name",
+                "Amend a contact on request",
+            ),
+            permissions = listOf("android.permission.READ_CONTACTS", "android.permission.WRITE_CONTACTS"),
+            dataExposed = "Nothing is read back; changes a contact's phone/email in your address book",
+            risk = "High — modifies your contacts",
+            defaultOn = false, phase = Phase.V1_1, highImpact = true, rootRequired = false,
+        ),
+        CapabilityMeta(
+            id = "rename_file", title = "Rename file",
+            why = listOf(
+                "Rename a file inside a granted writable folder — alongside write_file / delete_file",
+                "Rename a file on request, confined to the writable-folders grant",
+            ),
+            permissions = emptyList(), // SAF writable-folders grant, handled by the gate + containment
+            dataExposed = "Nothing is read; renames a file within a writable folder",
+            risk = "Medium — renames files (only inside folders you granted for writing)",
+            defaultOn = false, phase = Phase.V1_1, highImpact = true, rootRequired = false,
+        ),
+        CapabilityMeta(
+            id = "set_screen_timeout", title = "Set screen timeout",
+            why = listOf(
+                "Set the screen-off timeout — alongside set_brightness, the write side of screen_info",
+                "Keep the screen on longer, or dim sooner, on request",
+            ),
+            permissions = emptyList(), // WRITE_SETTINGS special access, handled by the gate
+            dataExposed = "Nothing is read; changes the screen-off timeout (a system setting)",
+            risk = "Low–medium — changes a device-wide display setting",
+            defaultOn = false, phase = Phase.V1_1, highImpact = true, rootRequired = false,
+        ),
+        CapabilityMeta(
+            id = "set_alarm", title = "Set alarm",
+            why = listOf(
+                "Create a clock alarm at a given time via the device's clock app",
+                "Set an alarm or reminder on request",
+            ),
+            permissions = emptyList(), // com.android.alarm.permission.SET_ALARM is normal/auto-granted
+            dataExposed = "Nothing is read; creates an alarm in the device's clock app",
+            risk = "Low — schedules an alarm",
+            defaultOn = false, phase = Phase.V1_1, highImpact = true, rootRequired = false,
+        ),
         CapabilityMeta(
             id = "elevated_current_app", title = "Foreground app (Shizuku/root)",
             why = listOf(
@@ -705,15 +784,17 @@ object Capabilities {
         "battery_status", "read_sensors" -> "sensors"
         "get_location", "wifi_info", "network_info", "telephony_info", "bluetooth_info" -> "location"
         "storage_info", "thermal_status", "screen_info", "volume_info", "locale_info", "dnd_status",
-        "foreground_app", "set_dnd", "set_brightness" -> "state"
-        "read_notifications", "notification_action", "post_notification", "read_sms", "read_call_log" -> "messaging"
+        "foreground_app", "set_dnd", "set_brightness", "set_screen_timeout" -> "state"
+        "read_notifications", "notification_action", "post_notification", "read_sms", "read_call_log",
+        "send_sms" -> "messaging"
         "get_contacts", "read_calendar", "create_calendar_event", "write_contact",
-        "delete_contact", "delete_calendar_event" -> "personal"
-        "list_files", "write_file", "media_search", "delete_file" -> "files"
+        "delete_contact", "delete_calendar_event", "update_calendar_event", "update_contact" -> "personal"
+        "list_files", "write_file", "media_search", "delete_file", "rename_file" -> "files"
         "take_photo", "record_audio", "capture_screenshot", "record_screen" -> "media"
         "read_clipboard", "write_clipboard" -> "clipboard"
         "run_shortcut", "list_packages", "launch_url", "dial", "torch", "vibrate",
-        "set_volume", "media_control", "toast", "share_text", "open_settings", "speak" -> "actions"
+        "set_volume", "media_control", "toast", "share_text", "open_settings", "speak",
+        "place_call", "set_alarm" -> "actions"
         "read_screen", "global_action", "tap", "swipe", "type_text" -> "accessibility"
         "root_screenshot", "root_shell", "elevated_input", "elevated_current_app", "elevated_settings" -> "elevated"
         else -> "actions"

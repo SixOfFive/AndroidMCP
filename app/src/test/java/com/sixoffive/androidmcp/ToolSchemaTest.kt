@@ -112,6 +112,9 @@ class ToolSchemaTest {
             "write_contact" to "name",
             "set_dnd" to "mode", "set_brightness" to "percent", "delete_contact" to "name",
             "delete_calendar_event" to "event_id", "delete_file" to "uri",
+            "send_sms" to "to", "place_call" to "number", "update_calendar_event" to "event_id",
+            "update_contact" to "name", "rename_file" to "uri", "set_screen_timeout" to "seconds",
+            "set_alarm" to "hour",
         )
         mustRequire.forEach { (tool, arg) ->
             val spec = ToolSchemas.specFor(tool)
@@ -195,12 +198,16 @@ class ToolSchemaTest {
         // The tools that change state outside this app must not claim to be read-only.
         listOf("write_clipboard", "root_shell", "elevated_input", "elevated_settings",
             "create_calendar_event", "set_volume", "torch", "vibrate", "launch_url", "run_shortcut",
-            "write_contact", "set_dnd", "set_brightness", "delete_contact", "delete_calendar_event", "delete_file")
+            "write_contact", "set_dnd", "set_brightness", "delete_contact", "delete_calendar_event", "delete_file",
+            "send_sms", "place_call", "update_calendar_event", "update_contact", "rename_file",
+            "set_screen_timeout", "set_alarm")
             .forEach { assertTrue(!ToolSchemas.specFor(it).readOnly, "'$it' must not be marked readOnly") }
         // ...and the highest-blast-radius ones must be flagged destructive.
         listOf("root_shell", "elevated_input", "elevated_settings", "write_clipboard", "create_calendar_event",
             "write_file", "tap", "swipe", "type_text", "write_contact",
-            "set_dnd", "set_brightness", "delete_contact", "delete_calendar_event", "delete_file")
+            "set_dnd", "set_brightness", "delete_contact", "delete_calendar_event", "delete_file",
+            "send_sms", "place_call", "update_calendar_event", "update_contact", "rename_file",
+            "set_screen_timeout", "set_alarm")
             .forEach { assertTrue(ToolSchemas.specFor(it).destructive, "'$it' must be marked destructive") }
     }
 

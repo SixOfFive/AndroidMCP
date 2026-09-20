@@ -333,4 +333,35 @@ object FilesAccess {
         if (!ok) throw ToolExecError("the provider refused to delete $uriStr")
         return "deleted $uriStr"
     }
+
+    /**
+     * Rename a file, confined to the WRITABLE folder trees (same [allowedForWrite] containment as
+     * delete). Rejects path separators in the new name so it stays a rename, not a move. Throws on
+     * refusal or failure; returns the new document URI (the provider may issue a fresh one).
+     */
+    fun renameFile(ctx: Context, uriStr: String, newName: String): String {
+        if (ConfigStore.current.writableFolders.isEmpty()) {
+            throw ToolExecError(
+                "no writable folders granted — open androidmcp (Writable folders → Add folder) to grant " +
+                    "write access to a folder, then retry",
+            )
+        }
+        val nm = newName.trim().takeUnless { it.isBlank() }
+            ?: throw ToolArgError("provide a non-empty 'new_name'")
+        if (nm.contains('/') || nm.contains('\\') || nm.startsWith(".")) {
+            throw ToolArgError("invalid file name '$nm' — no path separators, and it cannot start with '.'")
+        }
+        val uri = runCatching { Uri.parse(uriStr) }.getOrNull()
+            ?: throw ToolArgError("invalid uri: $uriStr")
+        if (!allowedForWrite(ctx, uri)) {
+            throw ToolArgError(
+                "refused: $uriStr is not inside a granted writable folder. Only content:// URIs printed " +
+                    "by list_files or write_file, within a folder added under Writable folders, can be renamed.",
+            )
+        }
+        val newUri = runCatching { DocumentsContract.renameDocument(ctx.contentResolver, uri, nm) }
+            .getOrElse { throw ToolExecError("could not rename $uriStr (a file named '$nm' may already exist, or the grant was revoked)") }
+            ?: throw ToolExecError("the provider refused to rename $uriStr")
+        return "renamed to '$nm'\nuri: $newUri"
+    }
 }

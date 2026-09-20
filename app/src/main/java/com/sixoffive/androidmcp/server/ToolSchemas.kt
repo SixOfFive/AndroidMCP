@@ -418,6 +418,69 @@ internal object ToolSchemas {
             destructive = true,
         ),
 
+        // ---- Wave 7 (comms + fills) ----
+        "send_sms" to Spec(
+            "Send an SMS text message — the write side of read_sms. Sends immediately; the message " +
+                "may cost money and reaches a real recipient.",
+            listOf(
+                str("to", "Destination phone number.", required = true),
+                str("message", "The text to send.", required = true),
+            ),
+            destructive = true, openWorld = true,
+        ),
+        "place_call" to Spec(
+            "Place a phone call directly (unlike dial, which only opens the dialer for you to press " +
+                "call). Starts a real call immediately.",
+            listOf(str("number", "Phone number to call.", required = true)),
+            destructive = true, openWorld = true,
+        ),
+        "update_calendar_event" to Spec(
+            "Update an existing calendar event by id (from read_calendar) — change any of title, start " +
+                "time, duration or location. Only the fields you pass are changed.",
+            listOf(
+                int("event_id", "The event id, as read_calendar reports it.", min = 0, required = true),
+                str("title", "New title. Omit to leave unchanged."),
+                int("start_epoch_ms", "New start time as Unix epoch MILLISECONDS. Omit to leave unchanged."),
+                int("duration_minutes", "New length in minutes (sets the end relative to start).", 1, 43200),
+                str("location", "New location text. Omit to leave unchanged."),
+            ),
+            destructive = true,
+        ),
+        "update_contact" to Spec(
+            "Add or replace a phone and/or email on an existing contact matched by exact display name. " +
+                "Pass at least one of phone/email.",
+            listOf(
+                str("name", "The exact display name of the contact to update.", required = true),
+                str("phone", "Phone number to set (replaces existing numbers). Optional."),
+                str("email", "Email to set (replaces existing emails). Optional."),
+            ),
+            destructive = true,
+        ),
+        "rename_file" to Spec(
+            "Rename a file inside a granted writable folder — alongside write_file / delete_file. Pass " +
+                "the content:// URI (from list_files or write_file) and the new name.",
+            listOf(
+                str("uri", "The content:// document URI of the file to rename.", required = true),
+                str("new_name", "The new file name (no path separators).", required = true),
+            ),
+            destructive = true,
+        ),
+        "set_screen_timeout" to Spec(
+            "Set the screen-off timeout in seconds — alongside set_brightness, the write side of " +
+                "screen_info. Needs permission to modify system settings.",
+            listOf(int("seconds", "Screen-off timeout in seconds.", 5, 3600, required = true)),
+            destructive = true,
+        ),
+        "set_alarm" to Spec(
+            "Create a clock alarm at a given time via the device's clock app.",
+            listOf(
+                int("hour", "Hour of day, 0–23.", 0, 23, required = true),
+                int("minute", "Minute, 0–59.", 0, 59, 0),
+                str("label", "Optional alarm label."),
+            ),
+            destructive = true,
+        ),
+
         // ---- elevated ----
         "elevated_input" to Spec(
             "Inject input system-wide into ANY app — something a normal Android app cannot do. Needs " +
