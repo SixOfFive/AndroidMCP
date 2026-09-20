@@ -648,9 +648,13 @@ object Mcp {
     // base64 blob inside one JSON-RPC reply is a memory/'too-large-response' hazard for many clients.
     private const val LARGE_MEDIA_BYTES = 4_000_000
 
-    /** Inline base64, or a fetchable resource_link when "Media as links" is on OR the blob is very large. */
-    private fun mediaBlocks(bytes: ByteArray, mime: String, name: String, isImage: Boolean): List<JsonObject> =
-        if (ConfigStore.current.mediaAsLinks || bytes.size > LARGE_MEDIA_BYTES) {
+    /**
+     * Inline base64, or a fetchable resource_link when "Media as links" is on, the blob is very
+     * large, or [forceLink] is set. [forceLink] is for media MCP has no inline content type for —
+     * video, notably — which must never be shoehorned into an `audio`/`image` block.
+     */
+    private fun mediaBlocks(bytes: ByteArray, mime: String, name: String, isImage: Boolean, forceLink: Boolean = false): List<JsonObject> =
+        if (forceLink || ConfigStore.current.mediaAsLinks || bytes.size > LARGE_MEDIA_BYTES) {
             val (mid, nonce) = MediaStore.put(bytes, mime)
             // The base the listener ACTUALLY bound, not live config: bind/TLS can be toggled
             // without restarting the server, and a link built from the new setting points at an
@@ -662,9 +666,12 @@ object Mcp {
                 "$scheme://${Net.reachableHost(ConfigStore.current.bind)}:${ConfigStore.current.port}"
             }
             val link = resourceLinkBlk("$base/media/$mid?k=$nonce", name, mime)
-            if (!ConfigStore.current.mediaAsLinks) // auto-linked purely due to size — say why
-                listOf(textBlk("(${bytes.size / 1_000_000}+ MB — returned as a link instead of inline base64)"), link)
-            else listOf(link)
+            when {
+                // auto-linked purely due to size — say why
+                !ConfigStore.current.mediaAsLinks && !forceLink && bytes.size > LARGE_MEDIA_BYTES ->
+                    listOf(textBlk("(${bytes.size / 1_000_000}+ MB — returned as a link instead of inline base64)"), link)
+                else -> listOf(link)
+            }
         } else {
             // java.util.Base64: same standard alphabet, padded, unwrapped — byte-identical to
             // android.util.Base64 with NO_WRAP, but usable from a plain-JVM unit test.
@@ -1218,7 +1225,8 @@ object Mcp {
         val mp4 = ScreenRecorder.record(ctx, dur)
             ?: throw ToolExecError("Screen recording failed — the projection may have been revoked. Re-start screen sharing in androidmcp.")
         return listOf(textBlk("Recorded ${dur}s of screen (${mp4.size / 1024}KB).")) +
-            mediaBlocks(mp4, "video/mp4", "screen.mp4", isImage = false)
+            // Always a link: MCP has no inline video content type, so an audio/image block would misrepresent it.
+            mediaBlocks(mp4, "video/mp4", "screen.mp4", isImage = false, forceLink = true)
     }
 
     private fun writeContact(ctx: Context, args: JsonObject): String {
