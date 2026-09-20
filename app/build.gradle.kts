@@ -13,8 +13,8 @@ android {
         applicationId = "com.sixoffive.androidmcp"
         minSdk = 26
         targetSdk = 33 // matches the A03s (Android 13); avoids Android-14 FGS-type enforcement for the MVP
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
