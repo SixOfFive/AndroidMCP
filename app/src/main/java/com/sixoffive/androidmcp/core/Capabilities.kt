@@ -182,6 +182,28 @@ object Capabilities {
             defaultOn = false, phase = Phase.V1_1, highImpact = false, rootRequired = false,
         ),
         CapabilityMeta(
+            id = "telephony_info", title = "Telephony info",
+            why = listOf(
+                "Report the mobile network: operator, SIM state, roaming, data state, and signal level",
+                "Let a client understand cellular connectivity without location or phone-number access",
+            ),
+            permissions = emptyList(),
+            dataExposed = "Carrier/operator name, SIM state, roaming and data state, coarse signal level, network country - no phone number, IMEI, or IMSI",
+            risk = "Low-medium - operator and country can hint at region; no subscriber identifiers",
+            defaultOn = false, phase = Phase.V1_1, highImpact = false, rootRequired = false,
+        ),
+        CapabilityMeta(
+            id = "bluetooth_info", title = "Bluetooth info",
+            why = listOf(
+                "Report whether Bluetooth is present and on, and whether BLE is supported",
+                "Let a client check radio state before suggesting a Bluetooth action",
+            ),
+            permissions = emptyList(),
+            dataExposed = "Adapter presence, on/off state, and BLE support - no device names, addresses, or bonded-device list",
+            risk = "Low - adapter state only; paired devices are not enumerated (that would need BLUETOOTH_CONNECT)",
+            defaultOn = false, phase = Phase.V1_1, highImpact = false, rootRequired = false,
+        ),
+        CapabilityMeta(
             id = "storage_info", title = "Storage info",
             why = listOf(
                 "Report internal and external storage total, used and free space",
@@ -223,6 +245,28 @@ object Capabilities {
             permissions = emptyList(),
             dataExposed = "Per-stream volume levels and the ringer mode — no personal data",
             risk = "Low — non-identifying audio settings",
+            defaultOn = false, phase = Phase.V1_1, highImpact = false, rootRequired = false,
+        ),
+        CapabilityMeta(
+            id = "locale_info", title = "Locale & time",
+            why = listOf(
+                "Report the device language, region, timezone, 24-hour setting, and current local time",
+                "Let a client localise answers and reason about the user's clock",
+            ),
+            permissions = emptyList(),
+            dataExposed = "Language, country/region, timezone, clock format, and the device's current date-time - no personal data",
+            risk = "Low - locale and timezone can hint at region",
+            defaultOn = false, phase = Phase.V1_1, highImpact = false, rootRequired = false,
+        ),
+        CapabilityMeta(
+            id = "dnd_status", title = "Do Not Disturb status",
+            why = listOf(
+                "Report the current Do Not Disturb / interruption filter (all, priority, alarms, none)",
+                "Let a client know whether notifications are currently being silenced",
+            ),
+            permissions = emptyList(),
+            dataExposed = "The interruption-filter mode and whether the app holds DND policy access - no notification contents",
+            risk = "Low - a single interruption-filter setting",
             defaultOn = false, phase = Phase.V1_1, highImpact = false, rootRequired = false,
         ),
         CapabilityMeta(
@@ -347,6 +391,17 @@ object Capabilities {
             defaultOn = false, phase = Phase.V1_1, highImpact = false, rootRequired = false,
         ),
         CapabilityMeta(
+            id = "speak", title = "Speak (text-to-speech)",
+            why = listOf(
+                "Read text aloud through the device speaker on request",
+                "Give a client an audible output channel - locate the phone, or hear a short message",
+            ),
+            permissions = emptyList(),
+            dataExposed = "Nothing is read; speaks aloud text you or the model provide",
+            risk = "Low - plays synthesised speech through the speaker; audible to anyone nearby",
+            defaultOn = false, phase = Phase.V1_1, highImpact = false, rootRequired = false,
+        ),
+        CapabilityMeta(
             id = "share_text", title = "Share text",
             why = listOf(
                 "Open the Android share sheet with text so the user can send it to any app",
@@ -467,15 +522,15 @@ object Capabilities {
     fun categoryOf(id: String): String = when (id) {
         "list_capabilities", "device_info" -> "core"
         "battery_status", "read_sensors" -> "sensors"
-        "get_location", "wifi_info", "network_info" -> "location"
-        "storage_info", "thermal_status", "screen_info", "volume_info" -> "state"
+        "get_location", "wifi_info", "network_info", "telephony_info", "bluetooth_info" -> "location"
+        "storage_info", "thermal_status", "screen_info", "volume_info", "locale_info", "dnd_status" -> "state"
         "read_notifications", "post_notification", "read_sms", "read_call_log" -> "messaging"
         "get_contacts", "read_calendar", "create_calendar_event" -> "personal"
         "list_files" -> "files"
         "take_photo", "record_audio", "capture_screenshot" -> "media"
         "read_clipboard", "write_clipboard" -> "clipboard"
         "run_shortcut", "list_packages", "launch_url", "dial", "torch", "vibrate",
-        "set_volume", "media_control", "toast", "share_text", "open_settings" -> "actions"
+        "set_volume", "media_control", "toast", "share_text", "open_settings", "speak" -> "actions"
         "root_screenshot", "root_shell", "elevated_input", "elevated_current_app", "elevated_settings" -> "elevated"
         else -> "actions"
     }

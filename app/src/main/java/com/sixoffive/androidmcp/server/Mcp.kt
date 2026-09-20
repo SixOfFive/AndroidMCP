@@ -664,7 +664,12 @@ object Mcp {
         "device_info" -> listOf(textBlk(deviceInfo(ctx)))
         "battery_status" -> listOf(textBlk(batteryStatus(ctx)))
         "read_sensors" -> listOf(textBlk(sensorSnapshot(ctx)))
-        "get_location" -> listOf(textBlk(location(ctx)))
+        "get_location" -> listOf(textBlk(location(ctx, args)))
+        "telephony_info" -> listOf(textBlk(telephonyInfo(ctx)))
+        "bluetooth_info" -> listOf(textBlk(bluetoothInfo(ctx)))
+        "locale_info" -> listOf(textBlk(localeInfo(ctx)))
+        "dnd_status" -> listOf(textBlk(dndStatus(ctx)))
+        "speak" -> listOf(textBlk(speak(ctx, args)))
         "post_notification" -> listOf(textBlk(postNotification(ctx, args)))
         "take_photo" -> takePhoto(ctx, args)
         "record_audio" -> recordAudio(ctx, args)
@@ -772,14 +777,28 @@ object Mcp {
         return synchronized(results) { results.entries.joinToString("\n") { "${it.key}: ${it.value}" } }
     }
 
-    private fun location(ctx: Context): String {
+    private fun location(ctx: Context, args: JsonObject): String {
         val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as LocationManager
         val providers = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER)
         val best = providers.mapNotNull { p ->
             runCatching { if (lm.isProviderEnabled(p)) lm.getLastKnownLocation(p) else null }.getOrNull()
         }.maxByOrNull { it.time } ?: return "no last-known location available (try again after a location fix)"
-        return "lat: ${best.latitude}\nlon: ${best.longitude}\naccuracy: ${best.accuracy} m\nprovider: ${best.provider}\nage: ${(System.currentTimeMillis() - best.time) / 1000} s"
+        val base = "lat: ${best.latitude}\nlon: ${best.longitude}\naccuracy: ${best.accuracy} m\nprovider: ${best.provider}\nage: ${(System.currentTimeMillis() - best.time) / 1000} s"
+        val wantAddress = args["address"]?.jsonPrimitive?.booleanOrNull ?: false
+        if (!wantAddress) return base
+        val addr = reverseGeocode(ctx, best.latitude, best.longitude)
+        return if (addr != null) "$base\naddress: $addr"
+        else "$base\naddress: (reverse geocoding produced no result — the geocoder backend may be missing or offline)"
     }
+
+    /** Best-effort reverse geocode; null when no backend is present or no match is returned. */
+    @Suppress("DEPRECATION") // the async getFromLocation is API 33+; the sync form still works at targetSdk 33
+    private fun reverseGeocode(ctx: Context, lat: Double, lon: Double): String? = runCatching {
+        if (!android.location.Geocoder.isPresent()) return null
+        val g = android.location.Geocoder(ctx, java.util.Locale.getDefault())
+        val a = g.getFromLocation(lat, lon, 1)?.firstOrNull() ?: return null
+        (0..a.maxAddressLineIndex).joinToString(", ") { a.getAddressLine(it) }.takeUnless { it.isBlank() }
+    }.getOrNull()
 
     private fun postNotification(ctx: Context, args: JsonObject): String {
         val title = args["title"]?.jsonPrimitive?.contentOrNull?.takeUnless { it.isBlank() }
@@ -984,6 +1003,122 @@ object Mcp {
             appendLine("validated: $validated")
             appendLine("metered: $metered")
             append("carrier: $carrier")
+        }
+    }
+
+    // ---- telephony_info ----
+    private fun telephonyInfo(ctx: android.content.Context): String {
+        val tm = ctx.applicationContext.getSystemService(android.content.Context.TELEPHONY_SERVICE)
+            as? android.telephony.TelephonyManager
+            ?: return "Telephony service is unavailable on this device."
+        val simState = when (tm.simState) {
+            android.telephony.TelephonyManager.SIM_STATE_ABSENT -> "absent"
+            android.telephony.TelephonyManager.SIM_STATE_READY -> "ready"
+            android.telephony.TelephonyManager.SIM_STATE_PIN_REQUIRED -> "pin_required"
+            android.telephony.TelephonyManager.SIM_STATE_PUK_REQUIRED -> "puk_required"
+            android.telephony.TelephonyManager.SIM_STATE_NETWORK_LOCKED -> "network_locked"
+            android.telephony.TelephonyManager.SIM_STATE_NOT_READY -> "not_ready"
+            android.telephony.TelephonyManager.SIM_STATE_PERM_DISABLED -> "permanently_disabled"
+            else -> "unknown"
+        }
+        val phoneType = when (tm.phoneType) {
+            android.telephony.TelephonyManager.PHONE_TYPE_GSM -> "gsm"
+            android.telephony.TelephonyManager.PHONE_TYPE_CDMA -> "cdma"
+            android.telephony.TelephonyManager.PHONE_TYPE_SIP -> "sip"
+            else -> "none"
+        }
+        val operator = tm.networkOperatorName?.takeIf { it.isNotBlank() } ?: "unknown"
+        val simOperator = tm.simOperatorName?.takeIf { it.isNotBlank() } ?: "unknown"
+        val country = tm.networkCountryIso?.takeIf { it.isNotBlank() }?.uppercase() ?: "unknown"
+        val roaming = runCatching { tm.isNetworkRoaming }.getOrDefault(false)
+        val dataState = when (tm.dataState) {
+            android.telephony.TelephonyManager.DATA_DISCONNECTED -> "disconnected"
+            android.telephony.TelephonyManager.DATA_CONNECTING -> "connecting"
+            android.telephony.TelephonyManager.DATA_CONNECTED -> "connected"
+            android.telephony.TelephonyManager.DATA_SUSPENDED -> "suspended"
+            else -> "unknown"
+        }
+        // getSignalStrength() is API 28+ and needs no permission; .level is a 0-4 bucket.
+        val signal = runCatching {
+            if (Build.VERSION.SDK_INT >= 28) tm.signalStrength?.let { "${it.level}/4" } else null
+        }.getOrNull() ?: "unknown"
+        return buildString {
+            appendLine("phone type: $phoneType")
+            appendLine("sim state: $simState")
+            appendLine("network operator: $operator")
+            appendLine("sim operator: $simOperator")
+            appendLine("network country: $country")
+            appendLine("roaming: $roaming")
+            appendLine("data state: $dataState")
+            append("signal level: $signal")
+        }
+    }
+
+    // ---- bluetooth_info ----
+    private fun bluetoothInfo(ctx: android.content.Context): String {
+        val mgr = ctx.applicationContext.getSystemService(android.content.Context.BLUETOOTH_SERVICE)
+            as? android.bluetooth.BluetoothManager
+        val adapter = mgr?.adapter ?: return "No Bluetooth adapter on this device."
+        // getState()/isEnabled() do not need BLUETOOTH_CONNECT (that governs names, scans and the
+        // bonded-device list, which this tool deliberately does not read). On API < 31 the legacy,
+        // auto-granted BLUETOOTH permission covers them; guard anyway for OEM quirks.
+        val state = runCatching {
+            when (adapter.state) {
+                android.bluetooth.BluetoothAdapter.STATE_OFF -> "off"
+                android.bluetooth.BluetoothAdapter.STATE_ON -> "on"
+                android.bluetooth.BluetoothAdapter.STATE_TURNING_ON -> "turning_on"
+                android.bluetooth.BluetoothAdapter.STATE_TURNING_OFF -> "turning_off"
+                else -> "unknown"
+            }
+        }.getOrDefault("restricted")
+        val enabled = runCatching { adapter.isEnabled }.getOrDefault(false)
+        val ble = ctx.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_BLUETOOTH_LE)
+        return buildString {
+            appendLine("adapter: present")
+            appendLine("state: $state")
+            appendLine("enabled: $enabled")
+            append("bluetooth low energy (BLE): ${if (ble) "supported" else "not supported"}")
+        }
+    }
+
+    // ---- locale_info ----
+    private fun localeInfo(ctx: android.content.Context): String {
+        val locales = ctx.resources.configuration.locales
+        val primary = if (locales.size() > 0) locales.get(0) else java.util.Locale.getDefault()
+        val tz = java.util.TimeZone.getDefault()
+        val now = java.util.Date()
+        val iso = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", java.util.Locale.US).format(now)
+        val offsetMin = tz.getOffset(now.time) / 60000
+        val sign = if (offsetMin >= 0) "+" else "-"
+        val off = "%02d:%02d".format(Math.abs(offsetMin) / 60, Math.abs(offsetMin) % 60)
+        val allTags = (0 until locales.size()).joinToString(", ") { locales.get(it).toLanguageTag() }
+        return buildString {
+            appendLine("language: ${primary.language}")
+            appendLine("country: ${primary.country.ifBlank { "unknown" }}")
+            appendLine("locale: ${primary.toLanguageTag()}")
+            appendLine("all locales: ${allTags.ifBlank { primary.toLanguageTag() }}")
+            appendLine("timezone: ${tz.id} (${tz.getDisplayName(tz.inDaylightTime(now), java.util.TimeZone.SHORT)})")
+            appendLine("utc offset: $sign$off")
+            appendLine("24-hour clock: ${android.text.format.DateFormat.is24HourFormat(ctx)}")
+            append("device time: $iso")
+        }
+    }
+
+    // ---- dnd_status ----
+    private fun dndStatus(ctx: android.content.Context): String {
+        val nm = ctx.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as? NotificationManager
+            ?: return "Notification service is unavailable on this device."
+        val filter = when (nm.currentInterruptionFilter) {
+            NotificationManager.INTERRUPTION_FILTER_ALL -> "all (Do Not Disturb off)"
+            NotificationManager.INTERRUPTION_FILTER_PRIORITY -> "priority only"
+            NotificationManager.INTERRUPTION_FILTER_NONE -> "total silence"
+            NotificationManager.INTERRUPTION_FILTER_ALARMS -> "alarms only"
+            else -> "undetermined (grant Notification Policy access for a precise read)"
+        }
+        val access = runCatching { nm.isNotificationPolicyAccessGranted }.getOrDefault(false)
+        return buildString {
+            appendLine("interruption filter: $filter")
+            append("policy access (needed to change DND): ${if (access) "granted" else "not granted"}")
         }
     }
 
@@ -1528,6 +1663,16 @@ object Mcp {
             }
         }
         return "showed a ${if (long) "long" else "short"} toast: \"${text.take(200)}\""
+    }
+
+    // ---- speak (text-to-speech) ----
+    private fun speak(ctx: android.content.Context, args: kotlinx.serialization.json.JsonObject): String {
+        val text = args["text"]?.jsonPrimitive?.contentOrNull?.takeUnless { it.isBlank() }
+            ?: throw ToolArgError("provide a non-empty 'text' to speak")
+        val clipped = text.take(2000)
+        Tts.speak(ctx, clipped)?.let { throw ToolExecError("could not speak: $it") }
+        return "spoke ${clipped.length} characters aloud through the device speaker" +
+            if (clipped.length < text.length) " (truncated from ${text.length})" else ""
     }
 
     // ---- share_text ----

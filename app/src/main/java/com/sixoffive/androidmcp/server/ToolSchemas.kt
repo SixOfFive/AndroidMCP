@@ -78,7 +78,15 @@ internal object ToolSchemas {
         "thermal_status" to read("Report the device thermal status and remaining thermal headroom."),
         "screen_info" to read("Report screen resolution, density, refresh rate, rotation and screen-off timeout."),
         "volume_info" to read("Report the current and maximum volume of every audio stream, plus the ringer mode."),
-        "get_location" to read("Report the device's current location, falling back to the last known fix. Returns latitude, longitude, accuracy and age."),
+        "get_location" to Spec(
+            "Report the device's current location, falling back to the last known fix. Returns latitude, longitude, accuracy and age.",
+            listOf(bool("address", "Also reverse-geocode the fix to a human-readable street address, when a geocoder backend is available.", default = false)),
+            readOnly = true,
+        ),
+        "telephony_info" to read("Report the mobile network: operator, SIM state, roaming, data state, signal level and country. No phone number, IMEI or IMSI."),
+        "bluetooth_info" to read("Report whether a Bluetooth adapter is present, whether it is on, and whether Bluetooth Low Energy is supported. Does not list paired devices."),
+        "locale_info" to read("Report the device language, region, timezone, 24-hour clock setting and current local date-time."),
+        "dnd_status" to read("Report the current Do Not Disturb / interruption-filter mode and whether the app can change it."),
         "read_clipboard" to read(
             "Read the current clipboard text. Android 10+ returns nothing unless androidmcp is the " +
                 "foregrounded app, so this fails while the app is in the background."
@@ -183,6 +191,10 @@ internal object ToolSchemas {
                 str("text", "Message to display.", required = true),
                 bool("long", "Show for ~3.5s instead of ~2s.", default = false),
             ),
+        ),
+        "speak" to Spec(
+            "Speak text aloud through the device speaker using the on-device text-to-speech engine. Blocks until the utterance finishes.",
+            listOf(str("text", "The text to read aloud. Truncated at 2000 characters.", required = true)),
         ),
         "vibrate" to Spec(
             "Vibrate the device once for a set duration. A single buzz — patterns are not supported.",

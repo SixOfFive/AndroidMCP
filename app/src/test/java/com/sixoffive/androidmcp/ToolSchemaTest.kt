@@ -106,7 +106,7 @@ class ToolSchemaTest {
             "elevated_input" to "action", "set_volume" to "level", "media_control" to "action",
             "toast" to "text", "share_text" to "text", "create_calendar_event" to "title",
             "root_shell" to "command", "run_shortcut" to "package",
-            "torch" to "on", "post_notification" to "title",
+            "torch" to "on", "post_notification" to "title", "speak" to "text",
         )
         mustRequire.forEach { (tool, arg) ->
             val spec = ToolSchemas.specFor(tool)
@@ -122,6 +122,25 @@ class ToolSchemaTest {
         val p = ToolSchemas.specFor("open_settings").args.first { it.name == "screen" }
         assertTrue(!p.required, "open_settings.screen falls back to \"apps\"; it is not required")
         assertEquals("\"apps\"", p.default?.toString())
+    }
+
+    @Test
+    fun `wave-1 context reads are marked read-only and speak is not`() {
+        // The four new context reads must not claim to change state; speak does (it plays audio),
+        // so it must not be read-only. A regression either way misinforms a host's auto-approve.
+        listOf("telephony_info", "bluetooth_info", "locale_info", "dnd_status").forEach {
+            assertTrue(ToolSchemas.specFor(it).readOnly, "'$it' must be marked readOnly")
+        }
+        assertTrue(!ToolSchemas.specFor("speak").readOnly, "speak plays audio; it is not read-only")
+    }
+
+    @Test
+    fun `get_location address flag is optional and defaults to false`() {
+        // get_location gained an argument but must still be callable with none — reverse geocoding
+        // is opt-in, so a bare call keeps returning coordinates as it always did.
+        val p = ToolSchemas.specFor("get_location").args.first { it.name == "address" }
+        assertTrue(!p.required, "get_location.address is opt-in, not required")
+        assertEquals("false", p.default?.toString())
     }
 
     @Test

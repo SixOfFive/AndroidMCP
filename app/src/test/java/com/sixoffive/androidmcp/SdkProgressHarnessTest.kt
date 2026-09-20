@@ -79,7 +79,7 @@ class SdkProgressHarnessTest {
      * Does the reference SDK deserialise EVERY real tool schema off the wire?
      *
      * v2 checked this once by hand against the K70. This automates it: `tools/list` runs through the
-     * real [Mcp.handle], so the SDK parses the real 40 tool definitions (with `required`, bounds and
+     * real [Mcp.handle], so the SDK parses the real 45 tool definitions (with `required`, bounds and
      * annotations) into its own `Tool` type. A bare inputSchema that a unit test still calls valid,
      * but the SDK rejects, would fail here.
      */

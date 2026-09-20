@@ -230,10 +230,14 @@ refuse with `HARDWARE_UNAVAILABLE`.
 | `run_shortcut` | Launch an app by package | none | ✓ |
 | `wifi_info` | Wi‑Fi signal (RSSI/level), link speed, frequency, SSID | `ACCESS_WIFI_STATE` (install-time) | |
 | `network_info` | Active transport, connected/metered, carrier | none | |
+| `telephony_info` | Operator, SIM state, roaming, data state, signal level, country | none | |
+| `bluetooth_info` | Adapter presence, on/off, BLE support (no paired-device list) | none | |
 | `storage_info` | Internal/external total, free, used | none | |
 | `thermal_status` | Thermal status + headroom | none | |
 | `screen_info` | Resolution, density, refresh, rotation, timeout | none | |
 | `volume_info` | Per-stream volumes + ringer mode | none | |
+| `locale_info` | Language, region, timezone, 24h setting, local time | none | |
+| `dnd_status` | Do Not Disturb / interruption filter + policy access | none | |
 | `torch` | Toggle the camera flash LED | none | |
 | `vibrate` | Buzz for N ms | `VIBRATE` (install-time) | |
 | `list_packages` | Installed apps (label + package) | `QUERY_ALL_PACKAGES` | |
@@ -245,6 +249,7 @@ refuse with `HARDWARE_UNAVAILABLE`.
 | `set_volume` | Set a stream's volume | `MODIFY_AUDIO_SETTINGS` (install-time) | ✓ |
 | `media_control` | Send a media key (play/pause/next…) | none | ✓ |
 | `toast` | Show a toast on screen | none | |
+| `speak` | Read text aloud (text-to-speech) | none | |
 | `share_text` | Open the share sheet with text | none | ✓ |
 | `open_settings` | Open a Settings screen | none | |
 

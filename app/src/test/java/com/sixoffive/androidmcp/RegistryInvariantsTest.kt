@@ -138,7 +138,8 @@ class RegistryInvariantsTest {
                 "list_capabilities", "device_info", "battery_status", "read_sensors",
                 "write_clipboard", "wifi_info", "network_info", "storage_info", "thermal_status",
                 "screen_info", "volume_info", "torch", "vibrate", "list_packages", "toast",
-                "open_settings",
+                "open_settings", "telephony_info", "bluetooth_info", "locale_info", "dnd_status",
+                "speak",
             ),
             Capabilities.noInterventionIds(),
         )

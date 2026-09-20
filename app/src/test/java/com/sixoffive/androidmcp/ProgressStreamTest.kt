@@ -18,7 +18,7 @@ import kotlin.test.assertTrue
 /**
  * `notifications/progress` during a tool call.
  *
- * 22 of the 40 tools block on a human tapping "Allow", so the interesting cases are all about a
+ * 22 of the 45 tools block on a human tapping "Allow", so the interesting cases are all about a
  * call that is slow for a reason the client cannot see. Two separable things are tested here: WHEN
  * a stream is offered at all (a decision, made from two independent client signals), and WHAT the
  * heartbeat emits while work runs (timing, which is why it was pulled out of the dispatch).
