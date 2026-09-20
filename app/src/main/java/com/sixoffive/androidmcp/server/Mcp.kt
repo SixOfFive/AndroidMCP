@@ -234,7 +234,9 @@ object Mcp {
             putJsonObject("serverInfo") {
                 put("name", "androidmcp")
                 put("title", "Android MCP")
-                put("version", "0.1.0")
+                // The built app version, not a hardcoded string — a literal here reported 0.1.0
+                // from a 0.3.0 build. BuildConfig.VERSION_NAME tracks defaultConfig.versionName.
+                put("version", com.sixoffive.androidmcp.BuildConfig.VERSION_NAME)
             }
             put("instructions", INSTRUCTIONS)
         }

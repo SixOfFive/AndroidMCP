@@ -71,6 +71,9 @@ android {
     }
     buildFeatures {
         compose = true
+        // Generates BuildConfig so the MCP `initialize` handler can report the real app version in
+        // serverInfo.version instead of a hardcoded string that silently goes stale each release.
+        buildConfig = true
     }
     testOptions {
         unitTests {

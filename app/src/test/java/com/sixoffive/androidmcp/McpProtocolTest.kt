@@ -154,6 +154,9 @@ class McpProtocolTest {
         val info = result["serverInfo"]!!.jsonObject
         assertEquals("androidmcp", info["name"]!!.jsonPrimitive.content)
         assertNotNull(info["title"])
+        // serverInfo.version must track the built app version, never a hardcoded literal — a
+        // stale "0.1.0" once shipped in a 0.3.0 build. Pinned to BuildConfig so a regression fails.
+        assertEquals(BuildConfig.VERSION_NAME, info["version"]!!.jsonPrimitive.content)
         // Clients surface `instructions` to the model; it carries the default-deny contract.
         assertTrue(result["instructions"]!!.jsonPrimitive.content.contains("default-deny", ignoreCase = true))
     }
