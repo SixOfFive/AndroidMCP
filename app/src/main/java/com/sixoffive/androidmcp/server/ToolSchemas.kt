@@ -384,6 +384,40 @@ internal object ToolSchemas {
             destructive = true,
         ),
 
+        // ---- Wave 6 (finish the pairs) ----
+        "set_dnd" to Spec(
+            "Set the Do Not Disturb interruption filter — the write side of dnd_status. Needs Do Not " +
+                "Disturb access, granted once in Android Settings.",
+            listOf(str("mode", "The interruption filter to set: 'all' turns DND off.", required = true,
+                enum = listOf("all", "priority", "alarms", "none"))),
+            destructive = true,
+        ),
+        "set_brightness" to Spec(
+            "Set the screen brightness (0–100%) — the write side of screen_info. Needs permission to " +
+                "modify system settings, granted once in Android Settings.",
+            listOf(int("percent", "Brightness as a percentage, 0 (dimmest) to 100 (brightest).", 0, 100, required = true)),
+            destructive = true,
+        ),
+        "delete_contact" to Spec(
+            "Delete a contact by exact display name — the inverse of write_contact. Deletes every " +
+                "contact with that name; check with get_contacts first.",
+            listOf(str("name", "The exact display name of the contact to delete.", required = true)),
+            destructive = true,
+        ),
+        "delete_calendar_event" to Spec(
+            "Delete a calendar event by its id — the inverse of create_calendar_event. Get the id from " +
+                "read_calendar (each event line shows its id).",
+            listOf(int("event_id", "The event id, as read_calendar reports it.", min = 0, required = true)),
+            destructive = true,
+        ),
+        "delete_file" to Spec(
+            "Delete a file inside a granted writable folder — the inverse of write_file. Pass a " +
+                "content:// URI printed by list_files or write_file; only files within a Writable folder " +
+                "can be deleted.",
+            listOf(str("uri", "The content:// document URI of the file to delete.", required = true)),
+            destructive = true,
+        ),
+
         // ---- elevated ----
         "elevated_input" to Spec(
             "Inject input system-wide into ANY app — something a normal Android app cannot do. Needs " +

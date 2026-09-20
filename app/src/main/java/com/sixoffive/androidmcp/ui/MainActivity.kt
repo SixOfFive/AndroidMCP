@@ -487,6 +487,21 @@ private fun ServerScreen() {
                             ctx.startActivity(android.content.Intent(android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS))
                         }
                     }) { Text("Usage access (Foreground app & usage)") }
+                    OutlinedButton(onClick = {
+                        runCatching {
+                            ctx.startActivity(android.content.Intent(android.provider.Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
+                        }
+                    }) { Text("Do Not Disturb access (Set DND)") }
+                    OutlinedButton(onClick = {
+                        runCatching {
+                            ctx.startActivity(
+                                android.content.Intent(
+                                    android.provider.Settings.ACTION_MANAGE_WRITE_SETTINGS,
+                                    android.net.Uri.parse("package:" + ctx.packageName),
+                                ),
+                            )
+                        }
+                    }) { Text("Modify system settings (Set brightness)") }
                     run {
                         permRefresh // re-check after a grant
                         if (android.os.Build.VERSION.SDK_INT >= 33 &&

@@ -27,8 +27,16 @@
     <uses-permission android:name="android.permission.WRITE_CALENDAR" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <!-- write_contact (Wave 5): add/update a contact. Read side uses READ_CONTACTS above. -->
+    <!-- write_contact / delete_contact (Wave 5/6): add or remove a contact. Read uses READ_CONTACTS. -->
     <uses-permission android:name="android.permission.WRITE_CONTACTS" />
+    <!-- set_dnd (Wave 6): change the interruption filter. Declared here; the actual ability is the
+         "Do Not Disturb access" special grant, checked by the gate (isNotificationPolicyAccessGranted),
+         so it is not listed in any CapabilityMeta.permissions. -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+    <!-- set_brightness (Wave 6): write Settings.System (brightness). A special app-access granted via
+         Settings.System.canWrite, checked by the gate — not a runtime permission, so not in
+         CapabilityMeta.permissions. -->
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" tools:ignore="ProtectedPermissions" />
     <!-- media_search (Wave 5): read media-library metadata. API 33+ splits by type; on API <= 32
          the OS maps these to the legacy READ_EXTERNAL_STORAGE, declared with maxSdkVersion so it is
          not requested on modern devices. The gate accepts any one type being granted. -->

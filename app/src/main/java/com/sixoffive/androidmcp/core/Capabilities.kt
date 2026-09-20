@@ -557,6 +557,62 @@ object Capabilities {
             risk = "High — modifies your contacts",
             defaultOn = false, phase = Phase.V1_1, highImpact = true, rootRequired = false,
         ),
+        // ---- Wave 6 (finish the pairs) ----
+        CapabilityMeta(
+            id = "set_dnd", title = "Set Do Not Disturb",
+            why = listOf(
+                "Change the interruption filter (all / priority / alarms only / total silence)",
+                "The write side of dnd_status — silence or unsilence the device on request",
+            ),
+            permissions = emptyList(), // Do Not Disturb access (notification-policy), handled by the gate
+            dataExposed = "Nothing is read; changes how the device interrupts you (DND mode)",
+            risk = "Medium — can silence calls and alarms, or turn silencing off",
+            defaultOn = false, phase = Phase.V1_1, highImpact = true, rootRequired = false,
+        ),
+        CapabilityMeta(
+            id = "set_brightness", title = "Set screen brightness",
+            why = listOf(
+                "Set the screen brightness (0–100%) — the write side of screen_info",
+                "Dim or brighten the display on request",
+            ),
+            permissions = emptyList(), // WRITE_SETTINGS special access, handled by the gate
+            dataExposed = "Nothing is read; changes the display brightness (a system setting)",
+            risk = "Low–medium — changes a device-wide display setting",
+            defaultOn = false, phase = Phase.V1_1, highImpact = true, rootRequired = false,
+        ),
+        CapabilityMeta(
+            id = "delete_contact", title = "Delete contact",
+            why = listOf(
+                "Delete a contact by display name — the inverse of write_contact",
+                "Remove a contact on request",
+            ),
+            permissions = listOf("android.permission.WRITE_CONTACTS"),
+            dataExposed = "Nothing is read; removes a contact (and its numbers/emails) from your address book",
+            risk = "High — permanently deletes contacts",
+            defaultOn = false, phase = Phase.V1_1, highImpact = true, rootRequired = false,
+        ),
+        CapabilityMeta(
+            id = "delete_calendar_event", title = "Delete calendar event",
+            why = listOf(
+                "Delete a calendar event by id (from read_calendar) — the inverse of create_calendar_event",
+                "Cancel an event on request",
+            ),
+            permissions = listOf("android.permission.WRITE_CALENDAR"),
+            dataExposed = "Nothing is read; removes an event from your calendar",
+            risk = "High — permanently deletes a calendar event",
+            defaultOn = false, phase = Phase.V1_1, highImpact = true, rootRequired = false,
+        ),
+        CapabilityMeta(
+            id = "delete_file", title = "Delete file",
+            why = listOf(
+                "Delete a file inside a granted writable folder — the inverse of write_file",
+                "Remove a file on request, confined to the writable-folders grant",
+            ),
+            permissions = emptyList(), // SAF writable-folders grant, handled by the gate + containment
+            dataExposed = "Nothing is read; permanently deletes a file within a writable folder",
+            risk = "High — permanently deletes files (only inside folders you granted for writing)",
+            defaultOn = false, phase = Phase.V1_1, highImpact = true, rootRequired = false,
+        ),
         CapabilityMeta(
             id = "elevated_current_app", title = "Foreground app (Shizuku/root)",
             why = listOf(
@@ -648,10 +704,11 @@ object Capabilities {
         "battery_status", "read_sensors" -> "sensors"
         "get_location", "wifi_info", "network_info", "telephony_info", "bluetooth_info" -> "location"
         "storage_info", "thermal_status", "screen_info", "volume_info", "locale_info", "dnd_status",
-        "foreground_app" -> "state"
+        "foreground_app", "set_dnd", "set_brightness" -> "state"
         "read_notifications", "notification_action", "post_notification", "read_sms", "read_call_log" -> "messaging"
-        "get_contacts", "read_calendar", "create_calendar_event", "write_contact" -> "personal"
-        "list_files", "write_file", "media_search" -> "files"
+        "get_contacts", "read_calendar", "create_calendar_event", "write_contact",
+        "delete_contact", "delete_calendar_event" -> "personal"
+        "list_files", "write_file", "media_search", "delete_file" -> "files"
         "take_photo", "record_audio", "capture_screenshot", "record_screen" -> "media"
         "read_clipboard", "write_clipboard" -> "clipboard"
         "run_shortcut", "list_packages", "launch_url", "dial", "torch", "vibrate",

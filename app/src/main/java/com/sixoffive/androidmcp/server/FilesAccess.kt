@@ -307,4 +307,30 @@ object FilesAccess {
         val verb = if (existing != null) "overwrote" else "created"
         return "$verb '${target.name ?: nm}' (${bytes.size} bytes) in ${tree.name ?: folderStr}\nuri: ${target.uri}"
     }
+
+    /**
+     * Delete a file, confined to the WRITABLE folder trees. Uses [allowedForWrite] — the same
+     * containment the write path uses — so a read-only shared folder can never be deleted from, and
+     * a URI outside every writable grant fails closed. Throws on refusal or a failed delete.
+     */
+    fun deleteFile(ctx: Context, uriStr: String): String {
+        if (ConfigStore.current.writableFolders.isEmpty()) {
+            throw ToolExecError(
+                "no writable folders granted — open androidmcp (Writable folders → Add folder) to grant " +
+                    "write access to a folder, then retry",
+            )
+        }
+        val uri = runCatching { Uri.parse(uriStr) }.getOrNull()
+            ?: throw ToolArgError("invalid uri: $uriStr")
+        if (!allowedForWrite(ctx, uri)) {
+            throw ToolArgError(
+                "refused: $uriStr is not inside a granted writable folder. Only content:// URIs printed " +
+                    "by list_files or write_file, within a folder added under Writable folders, can be deleted.",
+            )
+        }
+        val ok = runCatching { DocumentsContract.deleteDocument(ctx.contentResolver, uri) }
+            .getOrElse { throw ToolExecError("could not delete $uriStr (the file may be gone, or the grant revoked)") }
+        if (!ok) throw ToolExecError("the provider refused to delete $uriStr")
+        return "deleted $uriStr"
+    }
 }

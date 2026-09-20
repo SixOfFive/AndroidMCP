@@ -835,6 +835,11 @@ object Mcp {
         "media_search" -> listOf(textBlk(mediaSearch(ctx, args)))
         "record_screen" -> recordScreen(ctx, args)
         "write_contact" -> listOf(textBlk(writeContact(ctx, args)))
+        "set_dnd" -> listOf(textBlk(setDnd(ctx, args)))
+        "set_brightness" -> listOf(textBlk(setBrightness(ctx, args)))
+        "delete_contact" -> listOf(textBlk(deleteContact(ctx, args)))
+        "delete_calendar_event" -> listOf(textBlk(deleteCalendarEvent(ctx, args)))
+        "delete_file" -> listOf(textBlk(deleteFileRunner(ctx, args)))
         "elevated_current_app" -> listOf(textBlk(elevatedCurrentApp(ctx)))
         "elevated_settings" -> listOf(textBlk(elevatedSettings(ctx, args)))
         "root_screenshot" -> rootScreenshot()
@@ -1271,6 +1276,73 @@ object Mcp {
         return "Saved contact \"$name\"" +
             (if (added.isEmpty()) " (name only)." else " with ${added.joinToString(" and ")}.") +
             " Android may merge it with an existing contact of the same name."
+    }
+
+    // ---- Wave 6 (finish the pairs) ----
+
+    private fun setDnd(ctx: Context, args: JsonObject): String {
+        val mode = args["mode"]?.jsonPrimitive?.contentOrNull
+            ?: throw ToolArgError("provide 'mode': all, priority, alarms, or none")
+        val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            ?: throw ToolExecError("notification service unavailable on this device")
+        val filter = when (mode) {
+            "all" -> NotificationManager.INTERRUPTION_FILTER_ALL
+            "priority" -> NotificationManager.INTERRUPTION_FILTER_PRIORITY
+            "alarms" -> NotificationManager.INTERRUPTION_FILTER_ALARMS
+            "none" -> NotificationManager.INTERRUPTION_FILTER_NONE
+            else -> throw ToolArgError("mode must be all, priority, alarms, or none")
+        }
+        runCatching { nm.setInterruptionFilter(filter) }
+            .getOrElse { throw ToolExecError("setting DND failed (${it.javaClass.simpleName}) — check Do Not Disturb access") }
+        val label = when (mode) {
+            "all" -> "off (all allowed)"; "priority" -> "priority only"
+            "alarms" -> "alarms only"; else -> "total silence"
+        }
+        return "Do Not Disturb set to: $label."
+    }
+
+    private fun setBrightness(ctx: Context, args: JsonObject): String {
+        val pct = (args["percent"]?.jsonPrimitive?.intOrNull
+            ?: throw ToolArgError("provide 'percent' (0–100)")).coerceIn(0, 100)
+        // Map to 1..255 (0 would be a black, hard-to-recover screen); switch off auto-brightness first.
+        val value = (pct * 255 / 100).coerceIn(1, 255)
+        runCatching {
+            android.provider.Settings.System.putInt(
+                ctx.contentResolver, android.provider.Settings.System.SCREEN_BRIGHTNESS_MODE,
+                android.provider.Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL)
+            android.provider.Settings.System.putInt(
+                ctx.contentResolver, android.provider.Settings.System.SCREEN_BRIGHTNESS, value)
+        }.getOrElse { throw ToolExecError("setting brightness failed (${it.javaClass.simpleName}) — check 'Modify system settings' access") }
+        return "Screen brightness set to $pct% ($value/255)."
+    }
+
+    private fun deleteContact(ctx: Context, args: JsonObject): String {
+        val name = args["name"]?.jsonPrimitive?.contentOrNull?.takeUnless { it.isBlank() }
+            ?: throw ToolArgError("provide the exact 'name' of the contact to delete")
+        val n = runCatching {
+            ctx.contentResolver.delete(
+                ContactsContract.Contacts.CONTENT_URI,
+                "${ContactsContract.Contacts.DISPLAY_NAME}=?", arrayOf(name))
+        }.getOrElse { throw ToolExecError("deleting the contact failed (${it.javaClass.simpleName})") }
+        if (n == 0) throw ToolExecError("no contact named \"$name\" was found")
+        return "Deleted $n contact(s) named \"$name\"."
+    }
+
+    private fun deleteCalendarEvent(ctx: Context, args: JsonObject): String {
+        val id = args["event_id"]?.jsonPrimitive?.longOrNull
+            ?: throw ToolArgError("provide integer 'event_id' (from read_calendar)")
+        val uri = android.content.ContentUris.withAppendedId(
+            android.provider.CalendarContract.Events.CONTENT_URI, id)
+        val n = runCatching { ctx.contentResolver.delete(uri, null, null) }
+            .getOrElse { throw ToolExecError("deleting the event failed (${it.javaClass.simpleName})") }
+        if (n == 0) throw ToolExecError("no calendar event with id $id was found")
+        return "Deleted calendar event $id."
+    }
+
+    private fun deleteFileRunner(ctx: Context, args: JsonObject): String {
+        val uri = args["uri"]?.jsonPrimitive?.contentOrNull?.takeUnless { it.isBlank() }
+            ?: throw ToolArgError("provide the content:// 'uri' of the file to delete (from list_files or write_file)")
+        return FilesAccess.deleteFile(ctx, uri)
     }
 
     private fun notificationAction(args: JsonObject): String {
@@ -1835,7 +1907,7 @@ object Mcp {
         android.content.ContentUris.appendId(builder, now)
         android.content.ContentUris.appendId(builder, end)
         val cols = arrayOf(
-            Instances.TITLE, Instances.BEGIN, Instances.END,
+            Instances.EVENT_ID, Instances.TITLE, Instances.BEGIN, Instances.END,
             Instances.EVENT_LOCATION, Instances.ALL_DAY, Instances.CALENDAR_DISPLAY_NAME,
         )
         val cur = runCatching {
@@ -1848,6 +1920,7 @@ object Mcp {
         val sb = StringBuilder()
         var n = 0
         cur.use { c ->
+            val eventIdIx = c.getColumnIndex(Instances.EVENT_ID)
             val titleIx = c.getColumnIndex(Instances.TITLE)
             val beginIx = c.getColumnIndex(Instances.BEGIN)
             val endIx = c.getColumnIndex(Instances.END)
@@ -1871,6 +1944,7 @@ object Mcp {
                 sb.append("• $title — $whenStr")
                 if (!loc.isNullOrBlank()) sb.append(" @ $loc")
                 if (!cal.isNullOrBlank()) sb.append(" [$cal]")
+                if (eventIdIx >= 0) sb.append(" (id ${c.getLong(eventIdIx)})")
                 sb.append("\n")
                 n++
             }

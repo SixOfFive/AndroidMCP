@@ -58,10 +58,26 @@ object GateEngine {
                     true,
                 )
             }
-            "write_file" -> {
+            "write_file", "delete_file" -> {
                 if (ConfigStore.current.writableFolders.isEmpty()) return GateResult.Denied(
                     ReasonCode.SPECIAL_ACCESS_NOT_ENABLED, cap, true, false,
                     "No writable folders yet. Open androidmcp → Writable folders → Add folder to grant write access to a folder, then retry.",
+                    true,
+                )
+            }
+            "set_dnd" -> {
+                val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+                val granted = runCatching { nm?.isNotificationPolicyAccessGranted == true }.getOrDefault(false)
+                if (!granted) return GateResult.Denied(
+                    ReasonCode.SPECIAL_ACCESS_NOT_ENABLED, cap, true, false,
+                    "Grant Do Not Disturb access to androidmcp in Android settings (Notifications → Do Not Disturb access → androidmcp → Allow; sideloaded apps must first tap 'Allow restricted settings').",
+                    true,
+                )
+            }
+            "set_brightness" -> {
+                if (!android.provider.Settings.System.canWrite(ctx)) return GateResult.Denied(
+                    ReasonCode.SPECIAL_ACCESS_NOT_ENABLED, cap, true, false,
+                    "Grant 'Modify system settings' to androidmcp in Android settings (Apps → androidmcp → Modify system settings → Allow), then retry.",
                     true,
                 )
             }
