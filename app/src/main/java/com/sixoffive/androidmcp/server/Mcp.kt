@@ -946,8 +946,12 @@ object Mcp {
     }
 
     private fun a11yTypeText(args: JsonObject): String {
-        val text = args["text"]?.jsonPrimitive?.contentOrNull ?: throw ToolArgError("provide 'text' to type into the focused field")
-        return McpAccessibilityService.typeText(text)
+        val text = args["text"]?.jsonPrimitive?.contentOrNull ?: throw ToolArgError("provide 'text' to type into the field")
+        val x = args["x"]?.jsonPrimitive?.intOrNull
+        val y = args["y"]?.jsonPrimitive?.intOrNull
+        if ((x == null) != (y == null)) throw ToolArgError("pass both 'x' and 'y' together (a field's centre from read_screen), or neither")
+        if ((x != null && x < 0) || (y != null && y < 0)) throw ToolArgError("x and y must be >= 0")
+        return McpAccessibilityService.typeText(text, x, y)
     }
 
     private fun notificationAction(args: JsonObject): String {

@@ -136,25 +136,91 @@ class McpAccessibilityService : AccessibilityService() {
             return "swiped ($x1, $y1) → ($x2, $y2) over ${durationMs}ms"
         }
 
-        /** Replace the text of the currently focused editable field. */
-        fun typeText(text: String): String {
+        /**
+         * Set the text of an editable field. Unlike a bare `ACTION_SET_TEXT` on whatever happens to
+         * hold input focus, this call locates and focuses the target node itself — a synthetic `tap`
+         * does not reliably focus Jetpack Compose text fields, so `type_text` must not depend on one
+         * having landed.
+         *
+         * With [x]/[y] (a centre from `read_screen`) it targets the editable field under that point.
+         * Without them it uses the already-focused input if there is one, else the sole editable
+         * field on screen; if several are editable and none is focused it asks for x,y so the choice
+         * is the caller's, not a guess.
+         */
+        fun typeText(text: String, x: Int? = null, y: Int? = null): String {
             val svc = requireSvc()
             val root = svc.rootInActiveWindow
                 ?: throw ToolExecError("no active window (the screen may be secure) — retry")
-            val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-                ?: throw ToolExecError("no text field is focused — tap a field first (e.g. with `tap`), then type")
             try {
-                if (!focused.isEditable) throw ToolExecError("the focused element isn't a text field")
-                val args = Bundle().apply {
-                    putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+                val target: AccessibilityNodeInfo = when {
+                    x != null && y != null ->
+                        editableAt(root, x, y)
+                            ?: throw ToolExecError("no editable field at ($x, $y) — check the coordinate against read_screen")
+                    else -> {
+                        val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.takeIf { it.isEditable }
+                        focused ?: run {
+                            val editable = collectEditable(root)
+                            when (editable.size) {
+                                0 -> throw ToolExecError("no editable field on screen — open one first, or pass x,y from read_screen")
+                                1 -> editable.single()
+                                else -> throw ToolExecError(
+                                    "${editable.size} editable fields are on screen and none is focused — " +
+                                        "pass x,y (a field's centre from read_screen) to choose one")
+                            }
+                        }
+                    }
                 }
-                if (!focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) {
-                    throw ToolExecError("the focused field refused the text (it may not support programmatic input)")
+                try {
+                    if (!target.isEditable) throw ToolExecError("the targeted element isn't a text field")
+                    // Focus the field via node actions, which work where a synthetic tap does not
+                    // (notably Compose). Best-effort: ACTION_SET_TEXT is what must succeed.
+                    runCatching { target.performAction(AccessibilityNodeInfo.ACTION_FOCUS) }
+                    runCatching { target.performAction(AccessibilityNodeInfo.ACTION_CLICK) }
+                    val args = Bundle().apply {
+                        putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+                    }
+                    if (!target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) {
+                        throw ToolExecError("the field refused the text (it may not support programmatic input)")
+                    }
+                    return "set the field to ${text.length} character(s)"
+                } finally {
+                    if (target !== root) @Suppress("DEPRECATION") runCatching { target.recycle() }
                 }
-                return "set the focused field to ${text.length} character(s)"
             } finally {
-                @Suppress("DEPRECATION") runCatching { focused.recycle(); root.recycle() }
+                @Suppress("DEPRECATION") runCatching { root.recycle() }
             }
+        }
+
+        /** The smallest editable, on-screen node whose bounds contain (x,y). Caller owns the result. */
+        private fun editableAt(root: AccessibilityNodeInfo, x: Int, y: Int): AccessibilityNodeInfo? {
+            var best: AccessibilityNodeInfo? = null
+            var bestArea = Int.MAX_VALUE
+            val rect = Rect()
+            fun visit(node: AccessibilityNodeInfo?) {
+                if (node == null) return
+                if (node.isEditable && node.isVisibleToUser) {
+                    node.getBoundsInScreen(rect)
+                    if (rect.contains(x, y)) {
+                        val area = rect.width() * rect.height()
+                        if (area < bestArea) { bestArea = area; best = node }
+                    }
+                }
+                for (i in 0 until node.childCount) visit(node.getChild(i))
+            }
+            visit(root)
+            return best
+        }
+
+        /** Every editable, on-screen node in the tree. Caller owns the results. */
+        private fun collectEditable(root: AccessibilityNodeInfo): List<AccessibilityNodeInfo> {
+            val out = ArrayList<AccessibilityNodeInfo>()
+            fun visit(node: AccessibilityNodeInfo?) {
+                if (node == null) return
+                if (node.isEditable && node.isVisibleToUser) out.add(node)
+                for (i in 0 until node.childCount) visit(node.getChild(i))
+            }
+            visit(root)
+            return out
         }
 
         private fun requireSvc(): McpAccessibilityService = instance

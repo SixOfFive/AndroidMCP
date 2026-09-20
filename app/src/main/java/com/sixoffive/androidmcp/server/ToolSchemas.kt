@@ -329,9 +329,16 @@ internal object ToolSchemas {
             destructive = true, openWorld = true,
         ),
         "type_text" to Spec(
-            "Replace the text of the currently focused input field via the accessibility service (no " +
-                "root). Focus a field first (e.g. tap it), then type. Sets the field's whole contents.",
-            listOf(str("text", "The text to place in the focused field.", required = true)),
+            "Type text into an editable field via the accessibility service (no root). Pass 'x','y' (a " +
+                "field's centre from read_screen) to target and focus that field directly — more " +
+                "reliable than tapping it first, especially for Jetpack Compose fields. Omit x,y to " +
+                "use the field that is already focused, or the only editable field on screen. Sets the " +
+                "field's whole contents.",
+            listOf(
+                str("text", "The text to place in the field.", required = true),
+                int("x", "Optional: X centre of the target field in absolute screen PIXELS (from read_screen).", min = 0),
+                int("y", "Optional: Y centre of the target field in absolute screen pixels.", min = 0),
+            ),
             destructive = true, openWorld = true,
         ),
 

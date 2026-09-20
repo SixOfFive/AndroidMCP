@@ -503,12 +503,12 @@ object Capabilities {
         CapabilityMeta(
             id = "type_text", title = "Type text (accessibility)",
             why = listOf(
-                "Set the text of the currently focused input field",
+                "Set the text of an editable field, targeted by coordinate or the focused one",
                 "Let a client fill a field without root",
             ),
             permissions = emptyList(), // Accessibility special access, handled by the gate
-            dataExposed = "Nothing is read; replaces the focused field's text with content you provide",
-            risk = "High — writes into whatever field is focused, in any app",
+            dataExposed = "Nothing is read; replaces the target field's text with content you provide",
+            risk = "High — writes into an editable field you point it at, in any app",
             defaultOn = false, phase = Phase.V1_1, highImpact = true, rootRequired = false,
         ),
         CapabilityMeta(
