@@ -2,7 +2,8 @@
 
 An on-device **Model Context Protocol (MCP) server that runs on an Android phone or
 tablet**, exposing the device's own capabilities — camera, microphone, files, sensors,
-location, notifications, screen, SMS and more — as MCP tools to LLM clients (Claude Code,
+location, notifications, on-screen content and input, calls and SMS, contacts and calendar,
+and more — as MCP tools to LLM clients (Claude Code,
 opencode, the MCP Inspector, or any MCP-capable tooling).
 
 Its reason for existing is the **permission model**. An LLM that can drive a phone's camera,
@@ -65,9 +66,10 @@ flipping a toggle off, or revoking an OS permission, fails the very next call.
 
 > **Per-call approval is required for high-impact tools.** The toggle is a *setup-time*
 > control; it does nothing to stop a prompt-injected LLM abusing an *already-enabled*
-> capability. Camera, mic, screenshot, location, SMS/call-log, clipboard-read and run-shortcut
-> therefore raise an **Allow / Deny notification** a human must approve (25 s timeout → deny),
-> or an "armed for N minutes" window.
+> capability. So every high-impact tool (✓ in the table) — camera, mic, screen capture and
+> control, location, reading SMS/call-log/notifications, sending SMS, placing calls, clipboard
+> read, file writes/deletes, and contact/calendar edits among them — raises an **Allow / Deny
+> notification** a human must approve (25 s timeout → deny), or an "armed for N minutes" window.
 
 > **Remote approval (optional, off by default).** Turning on **Remote approval (elicitation)**
 > lets you answer that Allow / Deny in your MCP client (via MCP
